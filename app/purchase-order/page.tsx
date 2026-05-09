@@ -246,15 +246,17 @@ export default function PurchaseOrderPage() {
 
   const filteredOrders = useMemo(() => {
     return purchaseOrders.filter((order) => {
+      const query = search.toLowerCase();
+
       const matchesSearch =
-        order.vendor.toLowerCase().includes(search.toLowerCase()) ||
-        order.customer.toLowerCase().includes(search.toLowerCase()) ||
-        order.category.toLowerCase().includes(search.toLowerCase()) ||
-        order.poNumber.toLowerCase().includes(search.toLowerCase()) ||
-        order.sku.toLowerCase().includes(search.toLowerCase()) ||
-        order.itemDescription.toLowerCase().includes(search.toLowerCase()) ||
-        order.status.toLowerCase().includes(search.toLowerCase()) ||
-        order.invoiceNumber.toLowerCase().includes(search.toLowerCase());
+        order.vendor.toLowerCase().includes(query) ||
+        order.customer.toLowerCase().includes(query) ||
+        order.category.toLowerCase().includes(query) ||
+        order.poNumber.toLowerCase().includes(query) ||
+        order.sku.toLowerCase().includes(query) ||
+        order.itemDescription.toLowerCase().includes(query) ||
+        order.status.toLowerCase().includes(query) ||
+        order.invoiceNumber.toLowerCase().includes(query);
 
       const matchesCategory =
         category === "All" || order.category === category;
@@ -286,8 +288,8 @@ export default function PurchaseOrderPage() {
   };
 
   const updateAllRowsInCurrentPo = (
-    field: keyof PurchaseOrderRow,
-    value: string | number
+    field: "invoiceNumber",
+    value: string
   ) => {
     setEditingRows((prev) =>
       prev.map((row) => ({
@@ -302,40 +304,58 @@ export default function PurchaseOrderPage() {
     field: keyof PurchaseOrderRow,
     value: string | number
   ) => {
-    setEditingRows((prev) => {
-      const updatedRows = prev.map((row) => {
+    setEditingRows((prev): PurchaseOrderRow[] => {
+      const updatedRows: PurchaseOrderRow[] = prev.map((row) => {
         if (row.id !== rowId) return row;
 
-        const updatedRow = {
-          ...row,
-          [field]: value,
-        };
-
         if (field === "received") {
-          const receivedValue = value === "" ? "" : Number(value);
+          const receivedValue: number | "" = value === "" ? "" : Number(value);
 
           return {
-            ...updatedRow,
+            ...row,
             received: receivedValue,
             diff:
               receivedValue === ""
                 ? 0
-                : Number(updatedRow.ordered) - Number(receivedValue),
+                : Number(row.ordered) - Number(receivedValue),
           };
         }
 
         if (field === "ordered") {
+          const orderedValue = Number(value);
+
           return {
-            ...updatedRow,
-            ordered: Number(value),
+            ...row,
+            ordered: orderedValue,
             diff:
-              updatedRow.received === ""
+              row.received === ""
                 ? 0
-                : Number(value) - Number(updatedRow.received),
+                : orderedValue - Number(row.received),
           };
         }
 
-        return updatedRow;
+        if (field === "amount") {
+          return {
+            ...row,
+            amount: Number(value),
+          };
+        }
+
+        if (field === "status") {
+          return {
+            ...row,
+            status: String(value),
+          };
+        }
+
+        if (field === "invoiceNumber") {
+          return {
+            ...row,
+            invoiceNumber: String(value),
+          };
+        }
+
+        return row;
       });
 
       if (field === "status" && value === "Received") {
@@ -426,10 +446,10 @@ export default function PurchaseOrderPage() {
   };
 
   const saveNewPurchaseOrder = () => {
-    const nextPoNumber = `PO-${23004}`;
-    const sharedInvoiceNumber = `INV-23004`;
+    const nextPoNumber = "PO-23004";
+    const sharedInvoiceNumber = "INV-23004";
 
-    const newPurchaseOrderRows = newRows
+    const newPurchaseOrderRows: PurchaseOrderRow[] = newRows
       .filter((row) => row.itemDescription)
       .map((row, index) => ({
         id: Date.now() + index,
