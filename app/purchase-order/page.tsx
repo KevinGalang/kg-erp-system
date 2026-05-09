@@ -19,139 +19,6 @@ const items = Array.from({ length: 10 }, (_, index) => ({
   category: `Category ${index + 1}`,
 }));
 
-const initialPurchaseOrders = [
-  {
-    id: 1,
-    vendor: "Vendor 1",
-    category: "Category 1",
-    poNumber: "PO-23001",
-    sku: "SKU-1001",
-    itemDescription: "Item 1",
-    ordered: 100,
-    received: 80,
-    expectedDate: "2026-05-18",
-    status: "Sent",
-    invoiceNumber: "INV-1001",
-  },
-  {
-    id: 2,
-    vendor: "Vendor 2",
-    category: "Category 2",
-    poNumber: "PO-23001",
-    sku: "SKU-1002",
-    itemDescription: "Item 2",
-    ordered: 200,
-    received: 200,
-    expectedDate: "2026-05-18",
-    status: "Received",
-    invoiceNumber: "INV-1001",
-  },
-  {
-    id: 3,
-    vendor: "Vendor 3",
-    category: "Category 3",
-    poNumber: "PO-23001",
-    sku: "SKU-1003",
-    itemDescription: "Item 3",
-    ordered: 150,
-    received: 100,
-    expectedDate: "2026-05-18",
-    status: "In Transit",
-    invoiceNumber: "",
-  },
-  {
-    id: 4,
-    vendor: "Vendor 1",
-    category: "Category 4",
-    poNumber: "PO-23002",
-    sku: "SKU-1004",
-    itemDescription: "Item 4",
-    ordered: 75,
-    received: 75,
-    expectedDate: "2026-05-21",
-    status: "Confirmed by Vendor",
-    invoiceNumber: "",
-  },
-  {
-    id: 5,
-    vendor: "Vendor 2",
-    category: "Category 5",
-    poNumber: "PO-23002",
-    sku: "SKU-1005",
-    itemDescription: "Item 5",
-    ordered: 300,
-    received: 250,
-    expectedDate: "2026-05-21",
-    status: "In Transit",
-    invoiceNumber: "",
-  },
-  {
-    id: 6,
-    vendor: "Vendor 3",
-    category: "Category 6",
-    poNumber: "PO-23002",
-    sku: "SKU-1006",
-    itemDescription: "Item 6",
-    ordered: 60,
-    received: 60,
-    expectedDate: "2026-05-21",
-    status: "Invoiced",
-    invoiceNumber: "INV-1002",
-  },
-  {
-    id: 7,
-    vendor: "Vendor 1",
-    category: "Category 7",
-    poNumber: "PO-23003",
-    sku: "SKU-1007",
-    itemDescription: "Item 7",
-    ordered: 90,
-    received: 0,
-    expectedDate: "2026-05-25",
-    status: "Sent",
-    invoiceNumber: "",
-  },
-  {
-    id: 8,
-    vendor: "Vendor 2",
-    category: "Category 8",
-    poNumber: "PO-23003",
-    sku: "SKU-1008",
-    itemDescription: "Item 8",
-    ordered: 120,
-    received: 0,
-    expectedDate: "2026-05-25",
-    status: "Confirmed by Vendor",
-    invoiceNumber: "",
-  },
-  {
-    id: 9,
-    vendor: "Vendor 3",
-    category: "Category 9",
-    poNumber: "PO-23003",
-    sku: "SKU-1009",
-    itemDescription: "Item 9",
-    ordered: 50,
-    received: 25,
-    expectedDate: "2026-05-25",
-    status: "In Transit",
-    invoiceNumber: "",
-  },
-  {
-    id: 10,
-    vendor: "Vendor 1",
-    category: "Category 10",
-    poNumber: "PO-23003",
-    sku: "SKU-1010",
-    itemDescription: "Item 10",
-    ordered: 180,
-    received: 180,
-    expectedDate: "2026-05-25",
-    status: "Received",
-    invoiceNumber: "INV-1003",
-  },
-];
-
 const statuses = [
   "Sent",
   "Confirmed by Vendor",
@@ -162,7 +29,21 @@ const statuses = [
 
 const vendors = ["Vendor 1", "Vendor 2", "Vendor 3"];
 
-type PurchaseOrderRow = (typeof initialPurchaseOrders)[number];
+type PurchaseOrderRow = {
+  id: number;
+  vendor: string;
+  customer: string;
+  category: string;
+  poNumber: string;
+  sku: string;
+  itemDescription: string;
+  ordered: number;
+  received: number;
+  expectedDate: string;
+  status: string;
+  invoiceNumber: string;
+  amount: number;
+};
 
 type NewOrderRow = {
   id: number;
@@ -170,19 +51,173 @@ type NewOrderRow = {
   itemDescription: string;
   category: string;
   ordered: number;
+  amount: number;
 };
 
+const initialPurchaseOrders: PurchaseOrderRow[] = [
+  {
+    id: 1,
+    vendor: "Vendor 1",
+    customer: "Customer 1",
+    category: "Category 1",
+    poNumber: "PO-23001",
+    sku: "SKU-1001",
+    itemDescription: "Item 1",
+    ordered: 100,
+    received: 80,
+    expectedDate: "2026-05-18",
+    status: "Sent",
+    invoiceNumber: "INV-1001",
+    amount: 1200,
+  },
+  {
+    id: 2,
+    vendor: "Vendor 1",
+    customer: "Customer 1",
+    category: "Category 2",
+    poNumber: "PO-23001",
+    sku: "SKU-1002",
+    itemDescription: "Item 2",
+    ordered: 200,
+    received: 200,
+    expectedDate: "2026-05-18",
+    status: "Received",
+    invoiceNumber: "INV-1001",
+    amount: 2400,
+  },
+  {
+    id: 3,
+    vendor: "Vendor 1",
+    customer: "Customer 1",
+    category: "Category 3",
+    poNumber: "PO-23001",
+    sku: "SKU-1003",
+    itemDescription: "Item 3",
+    ordered: 150,
+    received: 100,
+    expectedDate: "2026-05-18",
+    status: "In Transit",
+    invoiceNumber: "",
+    amount: 1800,
+  },
+  {
+    id: 4,
+    vendor: "Vendor 2",
+    customer: "Customer 2",
+    category: "Category 4",
+    poNumber: "PO-23002",
+    sku: "SKU-1004",
+    itemDescription: "Item 4",
+    ordered: 75,
+    received: 75,
+    expectedDate: "2026-05-21",
+    status: "Confirmed by Vendor",
+    invoiceNumber: "",
+    amount: 950,
+  },
+  {
+    id: 5,
+    vendor: "Vendor 2",
+    customer: "Customer 2",
+    category: "Category 5",
+    poNumber: "PO-23002",
+    sku: "SKU-1005",
+    itemDescription: "Item 5",
+    ordered: 300,
+    received: 250,
+    expectedDate: "2026-05-21",
+    status: "In Transit",
+    invoiceNumber: "",
+    amount: 4100,
+  },
+  {
+    id: 6,
+    vendor: "Vendor 2",
+    customer: "Customer 2",
+    category: "Category 6",
+    poNumber: "PO-23002",
+    sku: "SKU-1006",
+    itemDescription: "Item 6",
+    ordered: 60,
+    received: 60,
+    expectedDate: "2026-05-21",
+    status: "Invoiced",
+    invoiceNumber: "INV-1002",
+    amount: 780,
+  },
+  {
+    id: 7,
+    vendor: "Vendor 3",
+    customer: "Customer 3",
+    category: "Category 7",
+    poNumber: "PO-23003",
+    sku: "SKU-1007",
+    itemDescription: "Item 7",
+    ordered: 90,
+    received: 0,
+    expectedDate: "2026-05-25",
+    status: "Sent",
+    invoiceNumber: "",
+    amount: 990,
+  },
+  {
+    id: 8,
+    vendor: "Vendor 3",
+    customer: "Customer 3",
+    category: "Category 8",
+    poNumber: "PO-23003",
+    sku: "SKU-1008",
+    itemDescription: "Item 8",
+    ordered: 120,
+    received: 0,
+    expectedDate: "2026-05-25",
+    status: "Confirmed by Vendor",
+    invoiceNumber: "",
+    amount: 1600,
+  },
+  {
+    id: 9,
+    vendor: "Vendor 3",
+    customer: "Customer 3",
+    category: "Category 9",
+    poNumber: "PO-23003",
+    sku: "SKU-1009",
+    itemDescription: "Item 9",
+    ordered: 50,
+    received: 25,
+    expectedDate: "2026-05-25",
+    status: "In Transit",
+    invoiceNumber: "",
+    amount: 700,
+  },
+  {
+    id: 10,
+    vendor: "Vendor 3",
+    customer: "Customer 3",
+    category: "Category 10",
+    poNumber: "PO-23003",
+    sku: "SKU-1010",
+    itemDescription: "Item 10",
+    ordered: 180,
+    received: 180,
+    expectedDate: "2026-05-25",
+    status: "Received",
+    invoiceNumber: "INV-1003",
+    amount: 3200,
+  },
+];
+
 export default function PurchaseOrderPage() {
-  const [purchaseOrders, setPurchaseOrders] = useState(initialPurchaseOrders);
+  const [purchaseOrders, setPurchaseOrders] =
+    useState<PurchaseOrderRow[]>(initialPurchaseOrders);
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [vendor, setVendor] = useState("All");
   const [status, setStatus] = useState("All");
 
-  const [editingOrder, setEditingOrder] = useState<PurchaseOrderRow | null>(
-    null
-  );
+  const [editingPoNumber, setEditingPoNumber] = useState<string | null>(null);
+  const [editingRows, setEditingRows] = useState<PurchaseOrderRow[]>([]);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newVendor, setNewVendor] = useState("Vendor 1");
@@ -195,6 +230,7 @@ export default function PurchaseOrderPage() {
       itemDescription: "",
       category: "",
       ordered: 0,
+      amount: 0,
     },
   ]);
 
@@ -202,6 +238,7 @@ export default function PurchaseOrderPage() {
     return purchaseOrders.filter((order) => {
       const matchesSearch =
         order.vendor.toLowerCase().includes(search.toLowerCase()) ||
+        order.customer.toLowerCase().includes(search.toLowerCase()) ||
         order.category.toLowerCase().includes(search.toLowerCase()) ||
         order.poNumber.toLowerCase().includes(search.toLowerCase()) ||
         order.sku.toLowerCase().includes(search.toLowerCase()) ||
@@ -220,35 +257,72 @@ export default function PurchaseOrderPage() {
     });
   }, [purchaseOrders, search, category, vendor, status]);
 
-  const updateEditingOrder = (
+  const poHeader = editingRows[0];
+
+  const poTotalAmount = editingRows.reduce(
+    (total, row) => total + Number(row.amount || 0),
+    0
+  );
+
+  const openPoDetails = (poNumber: string) => {
+    const rows = purchaseOrders.filter((order) => order.poNumber === poNumber);
+    setEditingPoNumber(poNumber);
+    setEditingRows(rows);
+  };
+
+  const closePoDetails = () => {
+    setEditingPoNumber(null);
+    setEditingRows([]);
+  };
+
+  const updateEditingRow = (
+    rowId: number,
     field: keyof PurchaseOrderRow,
     value: string | number
   ) => {
-    if (!editingOrder) return;
-
-    setEditingOrder({
-      ...editingOrder,
-      [field]: value,
-    });
+    setEditingRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              [field]: value,
+            }
+          : row
+      )
+    );
   };
 
-  const saveEditedOrder = () => {
-    if (!editingOrder) return;
+  const copyRowQty = (rowId: number) => {
+    setEditingRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              received: row.ordered,
+            }
+          : row
+      )
+    );
+  };
 
+  const copyAllQty = () => {
+    setEditingRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        received: row.ordered,
+      }))
+    );
+  };
+
+  const savePoDetails = () => {
     setPurchaseOrders((prev) =>
-      prev.map((order) => (order.id === editingOrder.id ? editingOrder : order))
+      prev.map((order) => {
+        const updatedRow = editingRows.find((row) => row.id === order.id);
+        return updatedRow || order;
+      })
     );
 
-    setEditingOrder(null);
-  };
-
-  const copyOrderedToReceived = () => {
-    if (!editingOrder) return;
-
-    setEditingOrder({
-      ...editingOrder,
-      received: editingOrder.ordered,
-    });
+    closePoDetails();
   };
 
   const updateNewRow = (
@@ -292,6 +366,7 @@ export default function PurchaseOrderPage() {
         itemDescription: "",
         category: "",
         ordered: 0,
+        amount: 0,
       },
     ]);
   };
@@ -302,11 +377,13 @@ export default function PurchaseOrderPage() {
 
   const saveNewPurchaseOrder = () => {
     const nextPoNumber = `PO-${23004}`;
+
     const newPurchaseOrderRows = newRows
       .filter((row) => row.itemDescription)
       .map((row, index) => ({
         id: Date.now() + index,
         vendor: newVendor,
+        customer: newCustomer,
         category: row.category,
         poNumber: nextPoNumber,
         sku: row.sku,
@@ -316,6 +393,7 @@ export default function PurchaseOrderPage() {
         expectedDate: shipDate || "2026-06-01",
         status: "Sent",
         invoiceNumber: "",
+        amount: Number(row.amount),
       }));
 
     setPurchaseOrders((prev) => [...prev, ...newPurchaseOrderRows]);
@@ -331,6 +409,7 @@ export default function PurchaseOrderPage() {
         itemDescription: "",
         category: "",
         ordered: 0,
+        amount: 0,
       },
     ]);
   };
@@ -438,6 +517,7 @@ export default function PurchaseOrderPage() {
                 </th>
                 <th className="px-5 py-4 text-left font-semibold">Status</th>
                 <th className="px-5 py-4 text-left font-semibold">Invoice#</th>
+                <th className="px-5 py-4 text-left font-semibold">Amount</th>
                 <th className="px-5 py-4 text-left font-semibold">Action</th>
               </tr>
             </thead>
@@ -457,22 +537,21 @@ export default function PurchaseOrderPage() {
                   <td className="px-5 py-4">{order.itemDescription}</td>
                   <td className="px-5 py-4">{order.ordered}</td>
                   <td className="px-5 py-4">{order.received}</td>
-                  <td className="px-5 py-4">
-                    {order.ordered - order.received}
-                  </td>
+                  <td className="px-5 py-4">{order.ordered - order.received}</td>
                   <td className="px-5 py-4">{order.expectedDate}</td>
                   <td className="px-5 py-4">
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
                       {order.status}
                     </span>
                   </td>
+                  <td className="px-5 py-4">{order.invoiceNumber || "-"}</td>
                   <td className="px-5 py-4">
-                    {order.invoiceNumber || "-"}
+                    ${order.amount.toLocaleString()}
                   </td>
                   <td className="px-5 py-4">
                     <button
                       type="button"
-                      onClick={() => setEditingOrder(order)}
+                      onClick={() => openPoDetails(order.poNumber)}
                       className="rounded-lg border border-slate-300 p-2 text-slate-700 hover:bg-slate-100"
                     >
                       <Pencil size={16} />
@@ -484,7 +563,7 @@ export default function PurchaseOrderPage() {
               {filteredOrders.length === 0 && (
                 <tr>
                   <td
-                    colSpan={12}
+                    colSpan={13}
                     className="px-5 py-8 text-center text-sm text-slate-500"
                   >
                     No purchase orders found.
@@ -496,151 +575,235 @@ export default function PurchaseOrderPage() {
         </div>
       </div>
 
-      {editingOrder && (
+      {editingPoNumber && poHeader && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl">
+          <div className="w-full max-w-7xl rounded-2xl bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Edit Purchase Order Details
-              </h2>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  PO: {editingPoNumber}
+                </h2>
+                <p className="text-sm text-slate-500">
+                  Edit all items under this purchase order.
+                </p>
+              </div>
 
               <button
                 type="button"
-                onClick={() => setEditingOrder(null)}
+                onClick={closePoDetails}
                 className="rounded-lg p-2 hover:bg-slate-100"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="grid gap-4 p-6 md:grid-cols-2">
+            <div className="grid gap-4 border-b border-slate-200 p-6 md:grid-cols-4">
               <div>
-                <label className="text-sm font-medium text-slate-700">
-                  PO Number
-                </label>
-                <input
-                  value={editingOrder.poNumber}
-                  disabled
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-slate-700">
+                <p className="text-xs font-semibold uppercase text-slate-500">
                   Vendor
-                </label>
-                <input
-                  value={editingOrder.vendor}
-                  disabled
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
-                />
+                </p>
+                <p className="mt-1 font-medium text-slate-900">
+                  {poHeader.vendor}
+                </p>
               </div>
 
               <div>
-                <label className="text-sm font-medium text-slate-700">
-                  SKU
-                </label>
-                <input
-                  value={editingOrder.sku}
-                  disabled
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
-                />
+                <p className="text-xs font-semibold uppercase text-slate-500">
+                  Customer
+                </p>
+                <p className="mt-1 font-medium text-slate-900">
+                  {poHeader.customer}
+                </p>
               </div>
 
               <div>
-                <label className="text-sm font-medium text-slate-700">
-                  Item Description
-                </label>
-                <input
-                  value={editingOrder.itemDescription}
-                  disabled
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
-                />
+                <p className="text-xs font-semibold uppercase text-slate-500">
+                  Expected Date
+                </p>
+                <p className="mt-1 font-medium text-slate-900">
+                  {poHeader.expectedDate}
+                </p>
               </div>
 
               <div>
-                <label className="text-sm font-medium text-slate-700">
-                  Ordered
-                </label>
-                <input
-                  type="number"
-                  value={editingOrder.ordered}
-                  onChange={(e) =>
-                    updateEditingOrder("ordered", Number(e.target.value))
-                  }
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                />
+                <p className="text-xs font-semibold uppercase text-slate-500">
+                  Total Amount
+                </p>
+                <p className="mt-1 font-medium text-slate-900">
+                  ${poTotalAmount.toLocaleString()}
+                </p>
               </div>
+            </div>
 
-              <div>
-                <label className="text-sm font-medium text-slate-700">
-                  Received
-                </label>
-                <div className="mt-1 flex gap-2">
-                  <input
-                    type="number"
-                    value={editingOrder.received}
-                    onChange={(e) =>
-                      updateEditingOrder("received", Number(e.target.value))
-                    }
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                  />
+            <div className="max-h-[60vh] overflow-auto p-6">
+              <table className="min-w-full border border-slate-200 text-sm">
+                <thead className="bg-slate-900 text-white">
+                  <tr>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Vendor
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Category
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      PO Number
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      SKU
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Item Description
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Ordered
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Received
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Diff
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Status
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Invoice#
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Amount
+                    </th>
+                    <th className="border border-slate-300 px-3 py-3 text-left">
+                      Copy
+                    </th>
+                  </tr>
+                </thead>
 
-                  <button
-                    type="button"
-                    onClick={copyOrderedToReceived}
-                    className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 text-sm hover:bg-slate-100"
-                  >
-                    <Copy size={16} />
-                    Copy Qty
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-slate-700">
-                  Status
-                </label>
-                <select
-                  value={editingOrder.status}
-                  onChange={(e) => updateEditingOrder("status", e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                >
-                  {statuses.map((statusName) => (
-                    <option key={statusName} value={statusName}>
-                      {statusName}
-                    </option>
+                <tbody>
+                  {editingRows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="border border-slate-200 px-3 py-2">
+                        {row.vendor}
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        {row.category}
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        {row.poNumber}
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        {row.sku}
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        {row.itemDescription}
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        <input
+                          type="number"
+                          value={row.ordered}
+                          onChange={(e) =>
+                            updateEditingRow(
+                              row.id,
+                              "ordered",
+                              Number(e.target.value)
+                            )
+                          }
+                          className="w-24 rounded-md border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        <input
+                          type="number"
+                          value={row.received}
+                          onChange={(e) =>
+                            updateEditingRow(
+                              row.id,
+                              "received",
+                              Number(e.target.value)
+                            )
+                          }
+                          className="w-24 rounded-md border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2 text-center">
+                        {row.ordered - row.received}
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        <select
+                          value={row.status}
+                          onChange={(e) =>
+                            updateEditingRow(row.id, "status", e.target.value)
+                          }
+                          className="rounded-md border border-slate-300 px-2 py-1"
+                        >
+                          {statuses.map((statusName) => (
+                            <option key={statusName} value={statusName}>
+                              {statusName}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        <input
+                          value={row.invoiceNumber}
+                          onChange={(e) =>
+                            updateEditingRow(
+                              row.id,
+                              "invoiceNumber",
+                              e.target.value
+                            )
+                          }
+                          className="w-28 rounded-md border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        <input
+                          type="number"
+                          value={row.amount}
+                          onChange={(e) =>
+                            updateEditingRow(
+                              row.id,
+                              "amount",
+                              Number(e.target.value)
+                            )
+                          }
+                          className="w-28 rounded-md border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="border border-slate-200 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => copyRowQty(row.id)}
+                          className="rounded-md border border-slate-300 p-2 hover:bg-slate-100"
+                        >
+                          <Copy size={15} />
+                        </button>
+                      </td>
+                    </tr>
                   ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-slate-700">
-                  Invoice#
-                </label>
-                <input
-                  value={editingOrder.invoiceNumber}
-                  onChange={(e) =>
-                    updateEditingOrder("invoiceNumber", e.target.value)
-                  }
-                  placeholder="Enter invoice number"
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                />
-              </div>
+                </tbody>
+              </table>
             </div>
 
             <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
               <button
                 type="button"
-                onClick={() => setEditingOrder(null)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                onClick={copyAllQty}
+                className="rounded-xl bg-orange-400 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500"
               >
-                Cancel
+                Copy All Qty
               </button>
 
               <button
                 type="button"
-                onClick={saveEditedOrder}
+                onClick={closePoDetails}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Close
+              </button>
+
+              <button
+                type="button"
+                onClick={savePoDetails}
                 className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
               >
                 <Save size={16} />
@@ -732,6 +895,9 @@ export default function PurchaseOrderPage() {
                         Ordered Qty
                       </th>
                       <th className="px-4 py-3 text-left font-semibold">
+                        Amount
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold">
                         Delete
                       </th>
                     </tr>
@@ -780,6 +946,21 @@ export default function PurchaseOrderPage() {
                               )
                             }
                             className="w-28 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
+                          />
+                        </td>
+
+                        <td className="px-4 py-3">
+                          <input
+                            type="number"
+                            value={row.amount}
+                            onChange={(e) =>
+                              updateNewRow(
+                                row.id,
+                                "amount",
+                                Number(e.target.value)
+                              )
+                            }
+                            className="w-32 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
                           />
                         </td>
 
