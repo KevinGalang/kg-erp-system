@@ -32,7 +32,6 @@ const statuses = [
 
 const vendors = ["Vendor 1", "Vendor 2", "Vendor 3"];
 const customers = ["Customer 1", "Customer 2", "Customer 3"];
-
 const PURCHASE_ORDERS_STORAGE_KEY = "kg_purchase_orders";
 
 type PurchaseOrderRow = {
@@ -202,7 +201,7 @@ const initialPurchaseOrders: PurchaseOrderRow[] = [
     received: 0,
     diff: 0,
     expectedDate: "2026-05-25",
-    status: "Confirmed by Vendor",
+    status: "In Transit",
     invoiceNumber: "INV-23003",
     amount: 700,
   },
@@ -218,7 +217,7 @@ const initialPurchaseOrders: PurchaseOrderRow[] = [
     received: 0,
     diff: 0,
     expectedDate: "2026-05-25",
-    status: "Confirmed by Vendor",
+    status: "Received",
     invoiceNumber: "INV-23003",
     amount: 3200,
   },
@@ -230,6 +229,7 @@ function readSavedPurchaseOrders() {
   try {
     const saved = window.localStorage.getItem(PURCHASE_ORDERS_STORAGE_KEY);
     if (!saved) return [] as PurchaseOrderRow[];
+
     const parsed = JSON.parse(saved);
     return Array.isArray(parsed) ? (parsed as PurchaseOrderRow[]) : [];
   } catch {
@@ -543,6 +543,7 @@ export default function PurchaseOrderPage() {
       const withoutExistingSamePo = prev.filter(
         (row) => row.poNumber !== nextPoNumber
       );
+
       const updatedOrders = [...newPurchaseOrderRows, ...withoutExistingSamePo];
 
       writeSavedPurchaseOrders(
@@ -617,18 +618,38 @@ export default function PurchaseOrderPage() {
     doc.save(`${poNumber}.pdf`);
   };
 
-  const sendEmail = () => {
-    const poNumber = savedPoNumber || getNextPoNumber(purchaseOrders);
-    const subject = encodeURIComponent(`Purchase Order ${poNumber}`);
-    const body = encodeURIComponent(
-      `Hi,\n\nPlease see purchase order details below.\n\nPO Number: ${poNumber}\nVendor: ${
-        newVendor || "Select Vendor"
-      }\nCustomer: ${newCustomer || "Select Customer"}\nShip Date: ${
-        shipDate || "2026-06-01"
-      }\nTotal Amount: $${newPoTotal.toLocaleString()}\n\nSender: kevingalang.mcg@gmail.com\n\nThank you.`
-    );
+  const sendEmail = async () => {
+    try {
+      const poNumber = savedPoNumber || getNextPoNumber(purchaseOrders);
 
-    window.location.href = `mailto:mcgalang14@gmail.com?subject=${subject}&body=${body}`;
+      const payload = {
+        poNumber,
+        vendor: newVendor || "Select Vendor",
+        customer: newCustomer || "Select Customer",
+        shipDate: shipDate || "2026-06-01",
+        total: newPoTotal.toLocaleString(),
+        rows: newRows,
+      };
+
+      const response = await fetch("/api/send-po-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        alert("Purchase order email sent successfully.");
+      } else {
+        alert(`Failed to send email: ${result.error}`);
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong sending the email.");
+    }
   };
 
   const resetCreateModal = () => {
@@ -739,7 +760,9 @@ export default function PurchaseOrderPage() {
               <tr>
                 <th className="px-5 py-4 text-left font-semibold">Vendor</th>
                 <th className="px-5 py-4 text-left font-semibold">Category</th>
-                <th className="px-5 py-4 text-left font-semibold">PO Number</th>
+                <th className="px-5 py-4 text-left font-semibold">
+                  PO Number
+                </th>
                 <th className="px-5 py-4 text-left font-semibold">SKU</th>
                 <th className="px-5 py-4 text-left font-semibold">
                   Item Description
@@ -909,11 +932,9 @@ export default function PurchaseOrderPage() {
                       <td className="border border-slate-200 px-3 py-2">
                         {row.sku}
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2">
                         {row.itemDescription}
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2">
                         <input
                           type="number"
@@ -928,7 +949,6 @@ export default function PurchaseOrderPage() {
                           className="w-24 rounded-md border border-slate-300 px-2 py-1"
                         />
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2">
                         <input
                           type="number"
@@ -945,11 +965,9 @@ export default function PurchaseOrderPage() {
                           className="w-24 rounded-md border border-slate-300 px-2 py-1"
                         />
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2 text-center">
                         {row.diff}
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2">
                         <select
                           value={row.status}
@@ -965,7 +983,6 @@ export default function PurchaseOrderPage() {
                           ))}
                         </select>
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2">
                         <input
                           value={row.invoiceNumber}
@@ -978,7 +995,6 @@ export default function PurchaseOrderPage() {
                           className="w-28 rounded-md border border-slate-300 px-2 py-1"
                         />
                       </td>
-
                       <td className="border border-slate-200 px-3 py-2">
                         <input
                           type="number"
