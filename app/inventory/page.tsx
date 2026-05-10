@@ -70,10 +70,24 @@ function getRunningAverage90Days(row: InventoryRow) {
   return Number((row.averageForecast / 90).toFixed(2));
 }
 
+function getLeadTimeDays(row: InventoryRow) {
+  const match = String(row.leadTime || "").match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
 function getStockLevelDays(row: InventoryRow) {
   const runningAverage = getRunningAverage90Days(row);
   if (runningAverage <= 0) return 0;
   return Number((row.currentInventory / runningAverage).toFixed(1));
+}
+
+function getComputedNeededQty(row: InventoryRow, minimumStockDays: number) {
+  const runningAverage = getRunningAverage90Days(row);
+  const leadTimeDays = getLeadTimeDays(row);
+  const targetInventory = runningAverage * (Math.max(0, minimumStockDays) + leadTimeDays);
+  const needed = targetInventory - row.currentInventory;
+
+  return Math.max(0, Math.ceil(needed));
 }
 
 function getOrderMultiple(row: InventoryRow) {
@@ -85,8 +99,8 @@ function roundUpToMultiple(value: number, multiple: number) {
   return Math.max(0, Math.ceil(value / multiple) * multiple);
 }
 
-function getSuggestedApprovedQty(row: InventoryRow) {
-  return roundUpToMultiple(row.needed, getOrderMultiple(row));
+function getSuggestedApprovedQty(row: InventoryRow, minimumStockDays: number) {
+  return roundUpToMultiple(getComputedNeededQty(row, minimumStockDays), getOrderMultiple(row));
 }
 
 function getQtyOptions(row: InventoryRow) {
@@ -127,6 +141,8 @@ export default function InventoryPage() {
   const [category, setCategory] = useState("All");
   const [vendor, setVendor] = useState("All");
   const [status, setStatus] = useState("All");
+  const [minimumStockDays, setMinimumStockDays] = useState(30);
+  const [activeApprovedSku, setActiveApprovedSku] = useState<string | null>(null);
   const [approvedQtyBySku, setApprovedQtyBySku] = useState<Record<string, number>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newVendor, setNewVendor] = useState("Vendor 1");
@@ -206,7 +222,7 @@ export default function InventoryPage() {
         if (field === "itemDescription") {
           const selectedItem = inventoryRows.find((item) => item.itemName === value);
           if (selectedItem) {
-            const ordered = getSuggestedApprovedQty(selectedItem);
+            const ordered = getSuggestedApprovedQty(selectedItem, minimumStockDays);
             return {
               ...row,
               sku: selectedItem.sku,
@@ -298,6 +314,17 @@ export default function InventoryPage() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
+              Min Stock Days
+              <input
+                type="number"
+                min={0}
+                value={minimumStockDays}
+                onChange={(e) => setMinimumStockDays(Math.max(0, Number(e.target.value) || 0))}
+                className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-center text-sm outline-none focus:border-slate-900"
+              />
+            </label>
+
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-900">
               TC: {formatMoney(totalCost)}
             </div>
@@ -346,19 +373,19 @@ export default function InventoryPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
-                <th className="px-5 py-4 text-left font-semibold">Category</th>
-                <th className="px-5 py-4 text-left font-semibold">Vendor</th>
-                <th className="px-5 py-4 text-left font-semibold">SKU</th>
-                <th className="px-5 py-4 text-left font-semibold">Item Name</th>
-                <th className="px-5 py-4 text-left font-semibold">Current Inventory</th>
-                <th className="px-5 py-4 text-left font-semibold">Running Ave. 90 Days</th>
-                <th className="px-5 py-4 text-left font-semibold">Lead Time</th>
-                <th className="px-5 py-4 text-left font-semibold">Stock Level in Days</th>
-                <th className="px-5 py-4 text-left font-semibold">Needed</th>
-                <th className="px-5 py-4 text-left font-semibold">Approved Qty</th>
-                <th className="px-5 py-4 text-left font-semibold">Cost</th>
-                <th className="px-5 py-4 text-left font-semibold">Total Cost</th>
-                <th className="px-5 py-4 text-left font-semibold">Status</th>
+                <th className="whitespace-nowrap px-4 py-4 text-left font-semibold">Category</th>
+                <th className="whitespace-nowrap px-4 py-4 text-left font-semibold">Vendor</th>
+                <th className="whitespace-nowrap px-4 py-4 text-left font-semibold">SKU</th>
+                <th className="whitespace-nowrap px-4 py-4 text-left font-semibold">Item</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Current Inv.</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Run Ave./Day</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Lead Time</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Stock Days</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Needed</th>
+                <th className="whitespace-nowrap px-4 py-4 text-left font-semibold">Approved Qty</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Cost</th>
+                <th className="whitespace-nowrap px-4 py-4 text-right font-semibold">Total Cost</th>
+                <th className="whitespace-nowrap px-4 py-4 text-left font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -366,55 +393,61 @@ export default function InventoryPage() {
                 const approvedQty = Number(approvedQtyBySku[item.sku] ?? 0);
                 const multiple = getOrderMultiple(item);
                 const isInvalidMultiple = approvedQty > 0 && approvedQty % multiple !== 0;
-                const suggestedQty = getSuggestedApprovedQty(item);
+                const suggestedQty = getSuggestedApprovedQty(item, minimumStockDays);
+                const neededQty = getComputedNeededQty(item, minimumStockDays);
+                const isActive = activeApprovedSku === item.sku;
 
                 return (
                   <tr key={item.sku} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-5 py-4">{item.category}</td>
-                    <td className="px-5 py-4">{item.vendor}</td>
-                    <td className="px-5 py-4 font-medium text-slate-700">{item.sku}</td>
-                    <td className="px-5 py-4">{item.itemName}</td>
-                    <td className="px-5 py-4">{item.currentInventory}</td>
-                    <td className="px-5 py-4">{getRunningAverage90Days(item)}</td>
-                    <td className="px-5 py-4">{item.leadTime}</td>
-                    <td className="px-5 py-4">{getStockLevelDays(item)}</td>
-                    <td className="px-5 py-4">{item.needed}</td>
-                    <td className="px-5 py-4">
-                      <div className="flex min-w-44 flex-col gap-2">
+                    <td className="whitespace-nowrap px-4 py-4">{item.category}</td>
+                    <td className="whitespace-nowrap px-4 py-4">{item.vendor}</td>
+                    <td className="whitespace-nowrap px-4 py-4 font-medium text-slate-700">{item.sku}</td>
+                    <td className="whitespace-nowrap px-4 py-4">{item.itemName}</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{item.currentInventory}</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{getRunningAverage90Days(item)}</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{getLeadTimeDays(item)} days</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{getStockLevelDays(item)}</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">{neededQty}</td>
+                    <td className="px-4 py-4">
+                      <div className="flex min-w-40 flex-col gap-2">
                         <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => bumpApprovedQty(item, -1)} className="rounded-lg border border-slate-300 p-1.5 hover:bg-slate-100"><Minus size={14} /></button>
+                          {isActive && (
+                            <button type="button" onClick={() => bumpApprovedQty(item, -1)} className="rounded-lg border border-slate-300 p-1.5 hover:bg-slate-100"><Minus size={14} /></button>
+                          )}
                           <input
                             type="number"
                             min={0}
                             step={multiple}
-                            list={`qty-options-${item.sku}`}
                             value={approvedQty}
+                            onFocus={() => setActiveApprovedSku(item.sku)}
+                            onClick={() => setActiveApprovedSku(item.sku)}
                             onChange={(e) => setApprovedQty(item.sku, Number(e.target.value))}
-                            className={`w-20 rounded-lg border px-2 py-1.5 text-center text-sm outline-none ${isInvalidMultiple ? "border-red-300 bg-red-50" : "border-slate-300"}`}
+                            className={`w-20 rounded-lg border px-2 py-1.5 text-center text-sm outline-none ${isInvalidMultiple ? "border-red-300 bg-red-50" : isActive ? "border-slate-900" : "border-slate-300"}`}
                           />
-                          <datalist id={`qty-options-${item.sku}`}>
-                            {getQtyOptions(item).map((option) => <option key={option} value={option} />)}
-                          </datalist>
-                          <button type="button" onClick={() => bumpApprovedQty(item, 1)} className="rounded-lg border border-slate-300 p-1.5 hover:bg-slate-100"><Plus size={14} /></button>
+                          {isActive && (
+                            <button type="button" onClick={() => bumpApprovedQty(item, 1)} className="rounded-lg border border-slate-300 p-1.5 hover:bg-slate-100"><Plus size={14} /></button>
+                          )}
                         </div>
 
-                        <div className="flex flex-wrap gap-1">
-                          {getQtyOptions(item).slice(0, 4).map((option) => (
-                            <button key={option} type="button" onClick={() => setApprovedQty(item.sku, option)} className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">
-                              {option}
+                        {isActive && (
+                          <div className="flex flex-wrap gap-1">
+                            {getQtyOptions(item).slice(0, 5).map((option) => (
+                              <button key={option} type="button" onClick={() => setApprovedQty(item.sku, option)} className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">
+                                {option}
+                              </button>
+                            ))}
+                            <button type="button" onClick={() => setApprovedQty(item.sku, suggestedQty)} className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">
+                              Suggest {suggestedQty}
                             </button>
-                          ))}
-                          <button type="button" onClick={() => setApprovedQty(item.sku, suggestedQty)} className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">
-                            Suggest {suggestedQty}
-                          </button>
-                        </div>
+                          </div>
+                        )}
 
-                        {isInvalidMultiple && <p className="text-xs font-medium text-red-600">Must be multiple of {multiple}</p>}
+                        {isActive && isInvalidMultiple && <p className="text-xs font-medium text-red-600">Must be multiple of {multiple}</p>}
                       </div>
                     </td>
-                    <td className="px-5 py-4">{formatMoney(item.cost)}</td>
-                    <td className="px-5 py-4 font-semibold">{formatMoney(approvedQty * item.cost)}</td>
-                    <td className="px-5 py-4">
+                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{formatMoney(item.cost)}</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">{formatMoney(approvedQty * item.cost)}</td>
+                    <td className="whitespace-nowrap px-4 py-4">
                       <span className={`rounded-full px-3 py-1 text-xs font-semibold ${item.status === "Healthy" ? "bg-green-100 text-green-700" : item.status === "Low Stocks" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>
                         {item.status}
                       </span>
