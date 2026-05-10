@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PageTitle from "@/components/PageTitle";
 import {
   Search,
@@ -27,6 +27,7 @@ const statuses = [
 ];
 
 const vendors = ["Vendor 1", "Vendor 2", "Vendor 3"];
+const PURCHASE_ORDERS_STORAGE_KEY = "kg_purchase_orders";
 
 type PurchaseOrderRow = {
   id: number;
@@ -217,9 +218,43 @@ const initialPurchaseOrders: PurchaseOrderRow[] = [
   },
 ];
 
+function readSavedPurchaseOrders() {
+  if (typeof window === "undefined") return [] as PurchaseOrderRow[];
+
+  try {
+    const saved = window.localStorage.getItem(PURCHASE_ORDERS_STORAGE_KEY);
+    if (!saved) return [] as PurchaseOrderRow[];
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? (parsed as PurchaseOrderRow[]) : [];
+  } catch {
+    return [] as PurchaseOrderRow[];
+  }
+}
+
+function writeSavedPurchaseOrders(rows: PurchaseOrderRow[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(PURCHASE_ORDERS_STORAGE_KEY, JSON.stringify(rows));
+}
+
+function getNextPoNumber(existingOrders: PurchaseOrderRow[]) {
+  const maxNumber = existingOrders.reduce((max, order) => {
+    const match = order.poNumber.match(/PO-(\d+)/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 23000);
+
+  return `PO-${maxNumber + 1}`;
+}
+
 export default function PurchaseOrderPage() {
   const [purchaseOrders, setPurchaseOrders] =
     useState<PurchaseOrderRow[]>(initialPurchaseOrders);
+
+  useEffect(() => {
+    const savedOrders = readSavedPurchaseOrders();
+    if (savedOrders.length) {
+      setPurchaseOrders([...savedOrders, ...initialPurchaseOrders]);
+    }
+  }, []);
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
@@ -385,12 +420,16 @@ export default function PurchaseOrderPage() {
   };
 
   const savePoDetails = () => {
-    setPurchaseOrders((prev) =>
-      prev.map((order) => {
+    setPurchaseOrders((prev) => {
+      const updatedOrders = prev.map((order) => {
         const updatedRow = editingRows.find((row) => row.id === order.id);
         return updatedRow || order;
-      })
-    );
+      });
+      writeSavedPurchaseOrders(
+        updatedOrders.filter((order) => !initialPurchaseOrders.some((initial) => initial.id === order.id))
+      );
+      return updatedOrders;
+    });
 
     closePoDetails();
   };
@@ -446,8 +485,8 @@ export default function PurchaseOrderPage() {
   };
 
   const saveNewPurchaseOrder = () => {
-    const nextPoNumber = "PO-23004";
-    const sharedInvoiceNumber = "INV-23004";
+    const nextPoNumber = getNextPoNumber(purchaseOrders);
+    const sharedInvoiceNumber = nextPoNumber.replace("PO-", "INV-");
 
     const newPurchaseOrderRows: PurchaseOrderRow[] = newRows
       .filter((row) => row.itemDescription)
@@ -468,7 +507,13 @@ export default function PurchaseOrderPage() {
         amount: Number(row.amount),
       }));
 
-    setPurchaseOrders((prev) => [...prev, ...newPurchaseOrderRows]);
+    setPurchaseOrders((prev) => {
+      const updatedOrders = [...newPurchaseOrderRows, ...prev];
+      writeSavedPurchaseOrders(
+        updatedOrders.filter((order) => !initialPurchaseOrders.some((initial) => initial.id === order.id))
+      );
+      return updatedOrders;
+    });
 
     setShowCreateModal(false);
     setNewVendor("Vendor 1");
