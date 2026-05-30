@@ -15,13 +15,17 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-slate-900 text-slate-900">
+      <body className="bg-white text-slate-900">
         <div className="flex min-h-screen">
-          <div className="fixed left-0 top-0 h-screen w-72 bg-slate-900 z-40 flex flex-col">
+          {/* Sidebar */}
+          <aside className="fixed left-0 top-0 z-40 h-screen w-72 bg-slate-900">
             <Sidebar />
-          </div>
-          <div className="flex flex-1 flex-col ml-72 bg-white min-h-screen">
+          </aside>
+
+          {/* Main Content */}
+          <div className="ml-72 flex min-h-screen flex-1 flex-col bg-white">
             <Header />
+
             <main className="flex-1 bg-white p-8">
               {children}
             </main>
