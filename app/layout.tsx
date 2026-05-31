@@ -15,19 +15,19 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full bg-white">
-      <body className="h-full min-h-screen overflow-x-hidden bg-white text-slate-900">
-        <div className="flex min-h-screen w-full bg-white">
-          <aside className="fixed left-0 top-0 z-40 h-screen w-72 bg-slate-900">
+      <body className="h-full overflow-hidden bg-white text-slate-900">
+        <div className="fixed inset-0 flex bg-white">
+          <aside className="h-full w-72 shrink-0 bg-slate-900">
             <Sidebar />
           </aside>
 
-          <div className="ml-72 flex min-h-screen w-[calc(100%-18rem)] flex-col bg-white">
+          <section className="flex h-full min-w-0 flex-1 flex-col bg-white">
             <Header />
 
-            <main className="min-h-[calc(100vh-4rem)] flex-1 bg-white p-8">
+            <main className="min-h-0 flex-1 overflow-y-auto bg-white p-8">
               {children}
             </main>
-          </div>
+          </section>
         </div>
       </body>
     </html>
