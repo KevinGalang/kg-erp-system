@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 export const runtime = "nodejs";
 
+type EnvMap = Record<string, string | undefined>;
+
 type ShopifyTokenResponse = {
   access_token: string;
-  scope: string;
-  expires_in: number;
+  scope?: string;
+  expires_in?: number;
 };
 
 type InventoryRow = {
@@ -81,8 +84,20 @@ const INVENTORY_QUERY = `
   }
 `;
 
-function getRequiredEnv(name: string) {
-  const value = process.env[name];
+async function getEnvMap(): Promise<EnvMap> {
+  try {
+    const context = await getCloudflareContext({ async: true });
+    return {
+      ...process.env,
+      ...(context.env as EnvMap),
+    };
+  } catch {
+    return process.env;
+  }
+}
+
+function requireEnv(env: EnvMap, name: string): string {
+  const value = env[name];
 
   if (!value) {
     throw new Error(`Missing ${name}`);
@@ -91,11 +106,19 @@ function getRequiredEnv(name: string) {
   return value;
 }
 
-function getSupabaseAdmin() {
-  const supabaseUrl = getRequiredEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const supabaseServiceRoleKey = getRequiredEnv("NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY");
+function getSupabaseAdmin(env: EnvMap) {
+  const supabaseUrl =
+    env.NEXT_PUBLIC_SUPABASE_URL || "https://nlakcdkuktclsncaqotk.supabase.co";
 
-  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+  const serviceRoleKey =
+    env.SUPABASE_SERVICE_ROLE_KEY ||
+    env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -103,10 +126,27 @@ function getSupabaseAdmin() {
   });
 }
 
-async function getShopifyAccessToken() {
-  const shop = getRequiredEnv("NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN");
-  const clientId = getRequiredEnv("NEXT_PUBLIC_SHOPIFY_CLIENT_ID");
-  const clientSecret = getRequiredEnv("NEXT_PUBLIC_SHOPIFY_CLIENT_SECRET");
+async function getShopifyAccessToken(env: EnvMap) {
+  const shop =
+    env.SHOPIFY_STORE_DOMAIN ||
+    env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN ||
+    "nutrition-dynamic.myshopify.com";
+
+  const clientId =
+    env.SHOPIFY_CLIENT_ID ||
+    env.NEXT_PUBLIC_SHOPIFY_CLIENT_ID;
+
+  const clientSecret =
+    env.SHOPIFY_CLIENT_SECRET ||
+    env.NEXT_PUBLIC_SHOPIFY_CLIENT_SECRET;
+
+  if (!clientId) {
+    throw new Error("Missing SHOPIFY_CLIENT_ID");
+  }
+
+  if (!clientSecret) {
+    throw new Error("Missing SHOPIFY_CLIENT_SECRET");
+  }
 
   const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: "POST",
@@ -135,11 +175,15 @@ async function getShopifyAccessToken() {
 }
 
 async function shopifyGraphQL<T>(
+  env: EnvMap,
   accessToken: string,
   query: string,
   variables: Record<string, unknown> = {}
-) {
-  const shop = getRequiredEnv("NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN");
+): Promise<T> {
+  const shop =
+    env.SHOPIFY_STORE_DOMAIN ||
+    env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN ||
+    "nutrition-dynamic.myshopify.com";
 
   const response = await fetch(
     `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
@@ -167,7 +211,7 @@ async function shopifyGraphQL<T>(
   return result.data as T;
 }
 
-async function getInventoryRows(accessToken: string) {
+async function getInventoryRows(env: EnvMap, accessToken: string) {
   const snapshotDate = new Date().toISOString().slice(0, 10);
   const rows: InventoryRow[] = [];
 
@@ -176,11 +220,12 @@ async function getInventoryRows(accessToken: string) {
 
   while (hasNextPage) {
     const data: ShopifyInventoryResponse =
-  await shopifyGraphQL<ShopifyInventoryResponse>(
-    accessToken,
-    INVENTORY_QUERY,
-    { cursor }
-  );
+      await shopifyGraphQL<ShopifyInventoryResponse>(
+        env,
+        accessToken,
+        INVENTORY_QUERY,
+        { cursor }
+      );
 
     for (const edge of data.productVariants.edges) {
       const variant = edge.node;
@@ -216,9 +261,11 @@ async function getInventoryRows(accessToken: string) {
 
 export async function GET() {
   try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const accessToken = await getShopifyAccessToken();
-    const rows = await getInventoryRows(accessToken);
+    const env = await getEnvMap();
+
+    const supabaseAdmin = getSupabaseAdmin(env);
+    const accessToken = await getShopifyAccessToken(env);
+    const rows = await getInventoryRows(env, accessToken);
 
     if (rows.length === 0) {
       return NextResponse.json({
