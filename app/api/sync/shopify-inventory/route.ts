@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import {
+  buildInventoryForecastRows,
+  fetchForecastMasterData,
+} from "@/lib/inventoryForecast";
 
 export const runtime = "nodejs";
 
@@ -14,10 +18,33 @@ type ShopifyTokenResponse = {
 
 type InventoryRow = {
   snapshot_date: string;
+  shopify_product_id: string;
+  shopify_variant_id: string;
+  inventory_item_id: string;
+  sku: string;
   product_title: string;
   variant_title: string;
-  product_sku: string;
-  quantity: number;
+  vendor: string;
+  tracked: boolean;
+  location_id: string;
+  location_name: string;
+  available_quantity: number;
+};
+
+type EnrichedInventoryRow = InventoryRow & {
+  current_qty: number;
+  on_order: number;
+  sell_90_day: number;
+  weekly_sell_rate: number;
+  amount_needed: number;
+  qty_approved: number;
+  days_of_inventory: number;
+  status: string;
+  lead_time: string;
+  review_period: string;
+  lead_time_weeks: number;
+  review_period_weeks: number;
+  uom: number;
 };
 
 type ShopifyInventoryResponse = {
@@ -28,15 +55,23 @@ type ShopifyInventoryResponse = {
     };
     edges: Array<{
       node: {
+        id: string;
         title: string;
         sku: string | null;
         product: {
+          id: string;
           title: string;
+          vendor: string;
         };
         inventoryItem: {
+          id: string;
+          tracked: boolean;
           inventoryLevels: {
             edges: Array<{
               node: {
+                location: {
+                  id: string;
+                };
                 quantities: Array<{
                   name: string;
                   quantity: number;
@@ -50,26 +85,45 @@ type ShopifyInventoryResponse = {
   };
 };
 
+type Sales90DayResponse = {
+  sales: Array<{
+    sku: string;
+    quantity: number;
+  }>;
+};
+
 const SHOPIFY_API_VERSION = "2026-04";
+const SHOPIFY_VARIANT_QUERY =
+  'product_status:active AND (product_type:Nutraceutical OR product_type:Nutraceuticals OR product_type:"Lab Test Public")';
+const EXCLUDED_VENDORS = new Set(["labcorp", "nutrition dynamic"]);
+const EXCLUDED_VARIANT_TITLES = new Set(["with review", "no review"]);
 
 const INVENTORY_QUERY = `
-  query InventorySync($cursor: String) {
-    productVariants(first: 100, after: $cursor) {
+  query InventorySync($cursor: String, $query: String!) {
+    productVariants(first: 100, after: $cursor, query: $query) {
       pageInfo {
         hasNextPage
         endCursor
       }
       edges {
         node {
+          id
           title
           sku
           product {
+            id
             title
+            vendor
           }
           inventoryItem {
+            id
+            tracked
             inventoryLevels(first: 20) {
               edges {
                 node {
+                  location {
+                    id
+                  }
                   quantities(names: ["available"]) {
                     name
                     quantity
@@ -94,16 +148,6 @@ async function getEnvMap(): Promise<EnvMap> {
   } catch {
     return process.env;
   }
-}
-
-function requireEnv(env: EnvMap, name: string): string {
-  const value = env[name];
-
-  if (!value) {
-    throw new Error(`Missing ${name}`);
-  }
-
-  return value;
 }
 
 function getSupabaseAdmin(env: EnvMap) {
@@ -211,8 +255,11 @@ async function shopifyGraphQL<T>(
   return result.data as T;
 }
 
-async function getInventoryRows(env: EnvMap, accessToken: string) {
-  const snapshotDate = new Date().toISOString().slice(0, 10);
+async function getInventoryRows(
+  env: EnvMap,
+  accessToken: string,
+  snapshotDate: string
+) {
   const rows: InventoryRow[] = [];
 
   let cursor: string | null = null;
@@ -224,7 +271,7 @@ async function getInventoryRows(env: EnvMap, accessToken: string) {
         env,
         accessToken,
         INVENTORY_QUERY,
-        { cursor }
+        { cursor, query: SHOPIFY_VARIANT_QUERY }
       );
 
     for (const edge of data.productVariants.edges) {
@@ -234,22 +281,38 @@ async function getInventoryRows(env: EnvMap, accessToken: string) {
         continue;
       }
 
-      const quantity =
-        variant.inventoryItem?.inventoryLevels.edges.reduce((total, level) => {
-          const available =
-            level.node.quantities.find((item) => item.name === "available")
-              ?.quantity ?? 0;
+      if (EXCLUDED_VENDORS.has(variant.product.vendor.trim().toLowerCase())) {
+        continue;
+      }
 
-          return total + available;
-        }, 0) ?? 0;
+      if (!variant.inventoryItem?.tracked) {
+        continue;
+      }
 
-      rows.push({
-        snapshot_date: snapshotDate,
-        product_title: variant.product.title,
-        variant_title: variant.title,
-        product_sku: variant.sku,
-        quantity,
-      });
+      if (EXCLUDED_VARIANT_TITLES.has(variant.title.trim().toLowerCase())) {
+        continue;
+      }
+
+      for (const level of variant.inventoryItem?.inventoryLevels.edges ?? []) {
+        const available =
+          level.node.quantities.find((item) => item.name === "available")
+            ?.quantity ?? 0;
+
+        rows.push({
+          snapshot_date: snapshotDate,
+          shopify_product_id: variant.product.id,
+          shopify_variant_id: variant.id,
+          inventory_item_id: variant.inventoryItem?.id ?? "",
+          sku: variant.sku,
+          product_title: variant.product.title,
+          variant_title: variant.title,
+          vendor: variant.product.vendor,
+          tracked: variant.inventoryItem?.tracked ?? false,
+          location_id: level.node.location.id,
+          location_name: "",
+          available_quantity: available,
+        });
+      }
     }
 
     hasNextPage = data.productVariants.pageInfo.hasNextPage;
@@ -259,34 +322,143 @@ async function getInventoryRows(env: EnvMap, accessToken: string) {
   return rows;
 }
 
-export async function GET() {
+async function getSalesBySku(origin: string) {
+  const response = await fetch(`${origin}/api/shopify/sales-90-day?refresh=1`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    return new Map<string, number>();
+  }
+
+  const data = (await response.json()) as Sales90DayResponse;
+
+  return new Map(data.sales.map((item) => [item.sku, item.quantity]));
+}
+
+function isMissingForecastColumnError(message: string) {
+  const lowerMessage = message.toLowerCase();
+
+  return (
+    lowerMessage.includes("column") &&
+    (lowerMessage.includes("current_qty") ||
+      lowerMessage.includes("sell_90_day") ||
+      lowerMessage.includes("weekly_sell_rate") ||
+      lowerMessage.includes("amount_needed") ||
+      lowerMessage.includes("lead_time") ||
+      lowerMessage.includes("review_period") ||
+      lowerMessage.includes("uom"))
+  );
+}
+
+async function insertSnapshotRows(
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>,
+  rows: InventoryRow[],
+  enrichedRows: EnrichedInventoryRow[]
+) {
+  const { error: enrichedError } = await supabaseAdmin
+    .from("shopify_inventory_snapshots")
+    .insert(enrichedRows);
+
+  if (!enrichedError) {
+    return {
+      forecastSaved: enrichedRows.length,
+      usedForecastColumns: true,
+    };
+  }
+
+  if (!isMissingForecastColumnError(enrichedError.message)) {
+    throw new Error(`Supabase insert failed: ${enrichedError.message}`);
+  }
+
+  const { error: rawError } = await supabaseAdmin
+    .from("shopify_inventory_snapshots")
+    .insert(rows);
+
+  if (rawError) {
+    throw new Error(`Supabase insert failed: ${rawError.message}`);
+  }
+
+  return {
+    forecastSaved: 0,
+    usedForecastColumns: false,
+  };
+}
+
+export async function GET(request: Request) {
   try {
     const env = await getEnvMap();
 
     const supabaseAdmin = getSupabaseAdmin(env);
     const accessToken = await getShopifyAccessToken(env);
-    const rows = await getInventoryRows(env, accessToken);
+    const snapshotDate = new Date().toISOString().slice(0, 10);
+    const rows = await getInventoryRows(env, accessToken, snapshotDate);
+
+    const { error: deleteError } = await supabaseAdmin
+      .from("shopify_inventory_snapshots")
+      .delete()
+      .eq("snapshot_date", snapshotDate);
+
+    if (deleteError) {
+      throw new Error(`Supabase snapshot cleanup failed: ${deleteError.message}`);
+    }
 
     if (rows.length === 0) {
       return NextResponse.json({
         success: true,
         inserted: 0,
+        snapshotDate,
         message: "No Shopify inventory rows found.",
       });
     }
 
-    const { error } = await supabaseAdmin
-      .from("shopify_inventory_snapshots")
-      .insert(rows);
+    const salesBySku = await getSalesBySku(new URL(request.url).origin);
+    const { vendorByName, itemBySku } =
+      await fetchForecastMasterData(supabaseAdmin);
+    const forecastRows = buildInventoryForecastRows(
+      rows,
+      salesBySku,
+      vendorByName,
+      itemBySku
+    );
 
-    if (error) {
-      throw new Error(`Supabase insert failed: ${error.message}`);
-    }
+    const forecastBySku = new Map(
+      forecastRows.map((row) => [row.sku.trim().toLowerCase(), row])
+    );
+    const enrichedRows = rows.map((row) => {
+      const forecast = forecastBySku.get(row.sku.trim().toLowerCase());
+
+      return {
+        ...row,
+        vendor: forecast?.vendor ?? row.vendor,
+        current_qty: forecast?.current_qty ?? row.available_quantity,
+        on_order: forecast?.on_order ?? 0,
+        sell_90_day: forecast?.sell_90_day ?? 0,
+        weekly_sell_rate: forecast?.weekly_sell_rate ?? 0,
+        amount_needed: forecast?.amount_needed ?? 0,
+        qty_approved: forecast?.qty_approved ?? 0,
+        days_of_inventory: forecast?.days_of_inventory ?? 0,
+        status: forecast?.status ?? "Healthy",
+        lead_time: forecast?.lead_time ?? "",
+        review_period: forecast?.review_period ?? "",
+        lead_time_weeks: forecast?.lead_time_weeks ?? 0,
+        review_period_weeks: forecast?.review_period_weeks ?? 0,
+        uom: forecast?.uom ?? 1,
+      };
+    });
+
+    const insertResult = await insertSnapshotRows(
+      supabaseAdmin,
+      rows,
+      enrichedRows
+    );
 
     return NextResponse.json({
       success: true,
       inserted: rows.length,
-      snapshotDate: rows[0]?.snapshot_date,
+      forecastSaved: insertResult.forecastSaved,
+      usedForecastColumns: insertResult.usedForecastColumns,
+      snapshotDate,
     });
   } catch (error) {
     const message =

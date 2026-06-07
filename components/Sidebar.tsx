@@ -11,7 +11,6 @@ import {
   Truck,
   BookOpen,
   Building2,
-  Users,
   PackageSearch,
   UserCog,
   ShieldCheck,
@@ -45,8 +44,7 @@ const menuItems: MenuItem[] = [
     label: "Masters",
     icon: BookOpen,
     children: [
-      { label: "Vendors", href: "/masters/vendors", icon: Building2 },
-      { label: "Customers", href: "/masters/customers", icon: Users },
+      { label: "Vendors List", href: "/masters/vendors", icon: Building2 },
       {
         label: "Item Master List",
         href: "/masters/item-master-list",
@@ -157,10 +155,6 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-slate-800 px-6 py-4">
-        <p className="text-xs text-slate-500">Logged in as</p>
-        <p className="text-sm font-medium text-white">Admin</p>
-      </div>
     </aside>
   );
 }

@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import PageTitle from "@/components/PageTitle";
-import { Search, Plus, Minus, Upload, ChevronDown, X } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { CalendarClock, Download, RefreshCw, Search, Plus, Minus, ChevronDown, X } from "lucide-react";
 
 type InventoryStatus = "Healthy" | "Low Stocks" | "Critical";
 
@@ -13,7 +12,6 @@ type InventoryRow = {
   variantTitle: string;
   sku: string;
   vendor: string;
-  leadTime: number;
   currentQty: number;
   onOrder: number;
   sell90Day: number;
@@ -22,62 +20,240 @@ type InventoryRow = {
   qtyApproved: number;
   daysOfInventory: number;
   status: InventoryStatus;
+  leadTime: string;
+  reviewPeriod: string;
+  leadTimeWeeks: number;
+  reviewPeriodWeeks: number;
+  uom: number;
 };
 
-const sampleData: InventoryRow[] = [
-  { date: "2026-05-11", productTitle: "Product A", variantTitle: "Red / Large", sku: "SKU-1001", vendor: "Vendor 1", leadTime: 7, currentQty: 240, onOrder: 0, sell90Day: 180, weeklyRate: 14, qtyNeeded: 60, qtyApproved: 0, daysOfInventory: 120, status: "Healthy" },
-  { date: "2026-05-11", productTitle: "Product B", variantTitle: "Blue / Small", sku: "SKU-1002", vendor: "Vendor 2", leadTime: 14, currentQty: 40, onOrder: 20, sell90Day: 120, weeklyRate: 9, qtyNeeded: 80, qtyApproved: 0, daysOfInventory: 30, status: "Low Stocks" },
-  { date: "2026-05-11", productTitle: "Product C", variantTitle: "Default", sku: "SKU-1003", vendor: "Vendor 3", leadTime: 21, currentQty: 12, onOrder: 0, sell90Day: 100, weeklyRate: 7, qtyNeeded: 88, qtyApproved: 0, daysOfInventory: 10, status: "Critical" },
-  { date: "2026-05-10", productTitle: "Product D", variantTitle: "Green / Medium", sku: "SKU-1004", vendor: "Vendor 1", leadTime: 10, currentQty: 310, onOrder: 50, sell90Day: 250, weeklyRate: 19, qtyNeeded: 40, qtyApproved: 0, daysOfInventory: 111, status: "Healthy" },
-  { date: "2026-05-10", productTitle: "Product E", variantTitle: "Black / XL", sku: "SKU-1005", vendor: "Vendor 2", leadTime: 12, currentQty: 90, onOrder: 10, sell90Day: 140, weeklyRate: 10, qtyNeeded: 50, qtyApproved: 0, daysOfInventory: 57, status: "Low Stocks" },
-  { date: "2026-05-10", productTitle: "Product F", variantTitle: "White / S", sku: "SKU-1006", vendor: "Vendor 3", leadTime: 30, currentQty: 8, onOrder: 0, sell90Day: 90, weeklyRate: 7, qtyNeeded: 82, qtyApproved: 0, daysOfInventory: 8, status: "Critical" },
-];
+type ColumnFilterKey =
+  | "productTitle"
+  | "variantTitle"
+  | "sku"
+  | "vendor"
+  | "currentQty"
+  | "onOrder"
+  | "sell90Day"
+  | "weeklyRate"
+  | "qtyNeeded"
+  | "qtyApproved"
+  | "daysOfInventory"
+  | "leadTime"
+  | "reviewPeriod"
+  | "status";
+type SyncFrequency = "daily" | "weekly" | "custom";
 
-type ColumnFilterKey = "productTitle" | "variantTitle" | "sku" | "vendor" | "status";
-type UploadType = "inventory" | "vidal90" | "pd90" | "onorder" | null;
+type ShopifyInventoryResponse = {
+  snapshotDate: string | null;
+  rows: InventoryRow[];
+  error?: string;
+};
 
-function parseCSV(text: string): Record<string, string>[] {
-  const lines = text.trim().split("\n");
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-  return lines.slice(1).map((line) => {
-    const values = line.split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
-    const row: Record<string, string> = {};
-    headers.forEach((h, i) => { row[h] = values[i] ?? ""; });
-    return row;
-  });
+function escapeHtml(value: string | number) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function roundUpToUom(value: number, uom: number) {
+  const safeUom = uom > 0 ? uom : 1;
+  const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+
+  if (safeValue === 0) {
+    return 0;
+  }
+
+  return Math.ceil(safeValue / safeUom) * safeUom;
+}
+
+function normalizeVendor(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function getVendorGroup(vendor: string) {
+  const normalized = normalizeVendor(vendor);
+
+  if (normalized.startsWith("vidal - ")) {
+    const vidalVendor = normalized.replace("vidal - ", "").trim();
+    const groupMap: Record<string, string> = {
+      biotics: "biotics research",
+      exemplar: "exemplar",
+      nuethix: "nuethix",
+      nutridyn: "nutridyn",
+    };
+
+    return groupMap[vidalVendor] ?? vidalVendor;
+  }
+
+  return normalized;
+}
+
+function isVidalVendor(vendor: string) {
+  return normalizeVendor(vendor).startsWith("vidal - ");
+}
+
+function getSavedSyncSchedule() {
+  const defaultSchedule = {
+    time: "08:00",
+    frequency: "weekly" as SyncFrequency,
+    days: ["M"],
+  };
+
+  if (typeof window === "undefined") {
+    return defaultSchedule;
+  }
+
+  const savedSchedule = window.localStorage.getItem("shopify-sync-schedule");
+
+  if (!savedSchedule) {
+    return defaultSchedule;
+  }
+
+  try {
+    const parsed = JSON.parse(savedSchedule) as {
+      time?: string;
+      frequency?: SyncFrequency;
+      days?: string[];
+    };
+
+    return {
+      time: parsed.time || defaultSchedule.time,
+      frequency: parsed.frequency || defaultSchedule.frequency,
+      days: parsed.days?.length ? parsed.days : defaultSchedule.days,
+    };
+  } catch {
+    window.localStorage.removeItem("shopify-sync-schedule");
+    return defaultSchedule;
+  }
 }
 
 export default function InventoryPage() {
+  const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([]);
+  const [loadingInventory, setLoadingInventory] = useState(true);
+  const [syncingShopify, setSyncingShopify] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [showScheduleFields, setShowScheduleFields] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState(() => getSavedSyncSchedule().time);
+  const [scheduleFrequency, setScheduleFrequency] = useState<SyncFrequency>(() => getSavedSyncSchedule().frequency);
+  const [scheduleDays, setScheduleDays] = useState<string[]>(() => getSavedSyncSchedule().days);
+  const [inventoryMessage, setInventoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [search, setSearch] = useState("");
   const [approvedQtyBySku, setApprovedQtyBySku] = useState<Record<string, number>>({});
   const [activeApprovedSku, setActiveApprovedSku] = useState<string | null>(null);
+  const [hoveredApprovedSku, setHoveredApprovedSku] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>("");
+  const [showLeadColumns, setShowLeadColumns] = useState(false);
   const [columnFilters, setColumnFilters] = useState<Record<ColumnFilterKey, string>>({
-    productTitle: "All", variantTitle: "All", sku: "All", vendor: "All", status: "All",
+    productTitle: "All",
+    variantTitle: "All",
+    sku: "All",
+    vendor: "All",
+    currentQty: "All",
+    onOrder: "All",
+    sell90Day: "All",
+    weeklyRate: "All",
+    qtyNeeded: "All",
+    qtyApproved: "All",
+    daysOfInventory: "All",
+    leadTime: "All",
+    reviewPeriod: "All",
+    status: "All",
   });
   const [openDropdown, setOpenDropdown] = useState<ColumnFilterKey | null>(null);
 
-  // Upload modal state
-  const [uploadType, setUploadType] = useState<UploadType>(null);
-  const [uploadDate, setUploadDate] = useState(new Date().toISOString().slice(0, 10));
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadMessage, setUploadMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadShopifyInventory = async () => {
+    setLoadingInventory(true);
+
+    try {
+      const response = await fetch("/api/inventory/shopify-snapshot");
+      const data = (await response.json()) as ShopifyInventoryResponse;
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to load Shopify inventory.");
+      }
+
+      setInventoryRows(data.rows);
+      setInventoryMessage(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to load Shopify inventory.";
+      setInventoryMessage({ type: "error", text: message });
+    } finally {
+      setLoadingInventory(false);
+    }
+  };
+
+  useEffect(() => {
+    let ignore = false;
+
+    fetch("/api/inventory/shopify-snapshot")
+      .then(async (response) => {
+        const data = (await response.json()) as ShopifyInventoryResponse;
+
+        if (!response.ok) {
+          throw new Error(data.error || "Unable to load Shopify inventory.");
+        }
+
+        return data;
+      })
+      .then((data) => {
+        if (ignore) {
+          return;
+        }
+
+        setInventoryRows(data.rows);
+        setInventoryMessage(null);
+      })
+      .catch((error) => {
+        if (ignore) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Unable to load Shopify inventory.";
+        setInventoryMessage({ type: "error", text: message });
+      })
+      .finally(() => {
+        if (!ignore) {
+          setLoadingInventory(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   const dates = useMemo(() => {
-    return Array.from(new Set(sampleData.map((r) => r.date))).sort((a, b) => b.localeCompare(a));
-  }, []);
+    return Array.from(new Set(inventoryRows.map((r) => r.date))).sort((a, b) => b.localeCompare(a));
+  }, [inventoryRows]);
 
   const latestDate = dates[0] ?? "";
   const effectiveDate = selectedDate || latestDate;
 
+  const getFilterValue = useCallback((row: InventoryRow, key: ColumnFilterKey) => {
+    if (key === "qtyApproved") {
+      return String(approvedQtyBySku[row.sku] ?? row.qtyApproved);
+    }
+
+    return String(row[key]);
+  }, [approvedQtyBySku]);
+
   const uniqueValues = (key: ColumnFilterKey) =>
-    Array.from(new Set(sampleData.map((r) => String(r[key])))).sort();
+    Array.from(
+      new Set(
+        inventoryRows
+          .filter((row) => !effectiveDate || row.date === effectiveDate)
+          .map((row) => getFilterValue(row, key))
+      )
+    ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   const filteredRows = useMemo(() => {
-    return sampleData.filter((row) => {
+    return inventoryRows.filter((row) => {
       const matchesDate = row.date === effectiveDate;
       const query = search.toLowerCase();
       const matchesSearch = !query ||
@@ -86,19 +262,184 @@ export default function InventoryPage() {
         row.variantTitle.toLowerCase().includes(query) ||
         row.vendor.toLowerCase().includes(query);
       const matchesColumns = (Object.keys(columnFilters) as ColumnFilterKey[]).every(
-        (key) => columnFilters[key] === "All" || String(row[key]) === columnFilters[key]
+        (key) => columnFilters[key] === "All" || getFilterValue(row, key) === columnFilters[key]
       );
       return matchesDate && matchesSearch && matchesColumns;
     });
-  }, [search, effectiveDate, columnFilters]);
+  }, [inventoryRows, search, effectiveDate, columnFilters, getFilterValue]);
 
-  const setApprovedQty = (sku: string, value: number) => {
-    setApprovedQtyBySku((prev) => ({ ...prev, [sku]: Math.max(0, value) }));
+  const sortedRows = useMemo(() => {
+    return [...filteredRows].sort((a, b) => {
+      const groupCompare = getVendorGroup(a.vendor).localeCompare(
+        getVendorGroup(b.vendor),
+        undefined,
+        { sensitivity: "base" }
+      );
+
+      if (groupCompare !== 0) {
+        return groupCompare;
+      }
+
+      const vidalCompare = Number(isVidalVendor(a.vendor)) - Number(isVidalVendor(b.vendor));
+
+      if (vidalCompare !== 0) {
+        return vidalCompare;
+      }
+
+      const vendorCompare = a.vendor.localeCompare(b.vendor, undefined, {
+        sensitivity: "base",
+      });
+
+      if (vendorCompare !== 0) {
+        return vendorCompare;
+      }
+
+      return a.productTitle.localeCompare(b.productTitle, undefined, {
+        sensitivity: "base",
+      });
+    });
+  }, [filteredRows]);
+
+  const syncShopifyInventory = async () => {
+    setSyncingShopify(true);
+    setInventoryMessage(null);
+    setSyncModalOpen(false);
+
+    try {
+      const response = await fetch("/api/sync/shopify-inventory");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Shopify sync failed.");
+      }
+
+      setInventoryMessage({
+        type: "success",
+        text: `Synced ${data.inserted ?? 0} Shopify rows and saved ${data.forecastSaved ?? 0} forecast rows for ${data.snapshotDate}.`,
+      });
+      await loadShopifyInventory();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Shopify sync failed.";
+      setInventoryMessage({ type: "error", text: message });
+    } finally {
+      setSyncingShopify(false);
+    }
   };
 
-  const bumpQty = (sku: string, direction: 1 | -1) => {
-    const current = approvedQtyBySku[sku] ?? 0;
-    setApprovedQty(sku, current + direction);
+  const toggleScheduleDay = (day: string) => {
+    setScheduleDays((current) => {
+      if (current.includes(day)) {
+        return current.filter((item) => item !== day);
+      }
+
+      return [...current, day];
+    });
+  };
+
+  const saveSyncSchedule = () => {
+    const days = scheduleFrequency === "daily" ? ["S", "M", "T", "W", "T2", "F", "S2"] : scheduleDays;
+
+    window.localStorage.setItem(
+      "shopify-sync-schedule",
+      JSON.stringify({
+        time: scheduleTime,
+        frequency: scheduleFrequency,
+        days,
+      })
+    );
+
+    setSyncModalOpen(false);
+    setInventoryMessage({
+      type: "success",
+      text: "Shopify sync schedule saved. Server cron still needs deployment setup to run automatically.",
+    });
+  };
+
+  const downloadExcel = () => {
+    const exportRows = filteredRows.map((row) => ({
+      "Product Title": row.productTitle,
+      "Variant Title": row.variantTitle,
+      SKU: row.sku,
+      Vendor: row.vendor,
+      "Current Qty": row.currentQty,
+      "On Order": row.onOrder,
+      "90 Day Sell Rate": row.sell90Day,
+      "Weekly Sell Rate": row.weeklyRate,
+      "Amount Needed": row.qtyNeeded,
+      "Qty Approved": approvedQtyBySku[row.sku] ?? row.qtyApproved,
+      "Days of Inventory": row.daysOfInventory,
+      "Lead Time": row.leadTime,
+      "Review Period": row.reviewPeriod,
+      UOM: row.uom,
+      Status: row.status,
+    }));
+
+    const exportHeaders = Object.keys(exportRows[0] ?? {
+      "Product Title": "",
+      "Variant Title": "",
+      SKU: "",
+      Vendor: "",
+      "Current Qty": "",
+      "On Order": "",
+      "90 Day Sell Rate": "",
+      "Weekly Sell Rate": "",
+      "Amount Needed": "",
+      "Qty Approved": "",
+      "Days of Inventory": "",
+      "Lead Time": "",
+      "Review Period": "",
+      UOM: "",
+      Status: "",
+    });
+
+    const tableRows = exportRows
+      .map((row) => {
+        return `<tr>${exportHeaders
+          .map((header) => `<td>${escapeHtml(row[header as keyof typeof row])}</td>`)
+          .join("")}</tr>`;
+      })
+      .join("");
+
+    const worksheet = `
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+        </head>
+        <body>
+          <table>
+            <thead>
+              <tr>${exportHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    const blob = new Blob([worksheet], {
+      type: "application/vnd.ms-excel;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `inventory-${effectiveDate || "latest"}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const setApprovedQty = (sku: string, value: number, uom = 1, normalize = false) => {
+    const nextValue = normalize ? roundUpToUom(value, uom) : Math.max(0, value);
+    setApprovedQtyBySku((prev) => ({ ...prev, [sku]: nextValue }));
+  };
+
+  const bumpQty = (sku: string, direction: 1 | -1, uom: number, fallback = 0) => {
+    const current = approvedQtyBySku[sku] ?? fallback;
+    const step = uom > 0 ? uom : 1;
+    const nextValue = current + direction * step;
+    setApprovedQty(sku, nextValue, step, true);
   };
 
   const setColumnFilter = (key: ColumnFilterKey, value: string) => {
@@ -106,161 +447,57 @@ export default function InventoryPage() {
     setOpenDropdown(null);
   };
 
-  const openUploadModal = (type: UploadType) => {
-    setUploadType(type);
-    setUploadFile(null);
-    setUploadMessage(null);
-    setUploadDate(new Date().toISOString().slice(0, 10));
-  };
-
-  const closeUploadModal = () => {
-    setUploadType(null);
-    setUploadFile(null);
-    setUploadMessage(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const handleUpload = async () => {
-    if (!uploadFile || !uploadDate) return;
-    setUploading(true);
-    setUploadMessage(null);
-
-    try {
-      const text = await uploadFile.text();
-      const rows = parseCSV(text);
-
-      if (rows.length === 0) {
-        setUploadMessage({ type: "error", text: "No data found in CSV file." });
-        setUploading(false);
-        return;
-      }
-
-      let tableName = "";
-      let mapped: Record<string, string | number>[] = [];
-
-      if (uploadType === "inventory") {
-        tableName = "inventory";
-        mapped = rows.map((r) => ({
-          date: uploadDate,
-          product_title: r["Product Title"] ?? r["product_title"] ?? "",
-          variant_title: r["Variant Title"] ?? r["variant_title"] ?? "",
-          sku: r["SKU"] ?? r["sku"] ?? "",
-          vendor: r["Vendor"] ?? r["vendor"] ?? "",
-          lead_time: Number(r["Lead Time"] ?? r["lead_time"] ?? 0),
-          current_qty: Number(r["Current Qty"] ?? r["current_qty"] ?? 0),
-          on_order: Number(r["On Order"] ?? r["on_order"] ?? 0),
-          sell_rate_90_day: Number(r["90 Day Sell Rate"] ?? r["sell_rate_90_day"] ?? 0),
-          weekly_sell_rate: Number(r["Weekly Sell Rate"] ?? r["weekly_sell_rate"] ?? 0),
-          qty_needed: Number(r["Qty Needed"] ?? r["qty_needed"] ?? 0),
-          qty_approved: 0,
-          days_of_inventory: Number(r["Days of Inventory"] ?? r["days_of_inventory"] ?? 0),
-          status: r["Status"] ?? r["status"] ?? "Healthy",
-        }));
-      } else if (uploadType === "vidal90") {
-        tableName = "vidal_90_day_sales";
-        mapped = rows.map((r) => ({
-          date: uploadDate,
-          product_title: r["Product title"] ?? r["Product Title"] ?? "",
-          product_variant_title: r["Product variant title"] ?? r["Variant Title"] ?? "",
-          product_variant_sku: r["Product variant SKU"] ?? r["SKU"] ?? "",
-          net_items_sold: Number(r["Net items sold"] ?? 0),
-          gross_sales: Number(r["Gross sales"] ?? 0),
-          discounts: Number(r["Discounts"] ?? 0),
-          returns: Number(r["Returns"] ?? 0),
-          net_sales: Number(r["Net sales"] ?? 0),
-          taxes: Number(r["Taxes"] ?? 0),
-          total_sales: Number(r["Total sales"] ?? 0),
-        }));
-      } else if (uploadType === "pd90") {
-        tableName = "pd_90_day_sales";
-        mapped = rows.map((r) => ({
-          date: uploadDate,
-          product_title: r["Product title"] ?? r["Product Title"] ?? "",
-          product_variant_title: r["Product variant title"] ?? r["Variant Title"] ?? "",
-          product_variant_sku: r["Product variant SKU"] ?? r["SKU"] ?? "",
-          net_items_sold: Number(r["Net items sold"] ?? 0),
-          gross_sales: Number(r["Gross sales"] ?? 0),
-          discounts: Number(r["Discounts"] ?? 0),
-          returns: Number(r["Returns"] ?? 0),
-          net_sales: Number(r["Net sales"] ?? 0),
-          taxes: Number(r["Taxes"] ?? 0),
-          total_sales: Number(r["Total sales"] ?? 0),
-        }));
-      } else if (uploadType === "onorder") {
-        tableName = "on_order";
-        mapped = rows.map((r) => ({
-          date: uploadDate,
-          sku: r["SKU"] ?? r["sku"] ?? "",
-          product_name: r["Product Name"] ?? r["product_name"] ?? "",
-          qty: Number(r["Qty"] ?? r["qty"] ?? 0),
-        }));
-      }
-
-      const { error } = await supabase.from(tableName).insert(mapped);
-
-      if (error) {
-        setUploadMessage({ type: "error", text: `Upload failed: ${error.message}` });
-      } else {
-        setUploadMessage({ type: "success", text: `Successfully uploaded ${mapped.length} rows to ${tableName}!` });
-      }
-    } catch (err) {
-      setUploadMessage({ type: "error", text: `Error reading file. Make sure it's a valid CSV.` });
-    }
-
-    setUploading(false);
-  };
-
-  const uploadLabels: Record<NonNullable<UploadType>, string> = {
-    inventory: "Upload Inventory",
-    vidal90: "Upload Vidal 90 Day Sales",
-    pd90: "Upload PD 90 Day Sales",
-    onorder: "Upload On Order",
-  };
-
-  const headers: { label: string; key?: ColumnFilterKey; align?: string }[] = [
-    { label: "Product Title", key: "productTitle" },
-    { label: "Variant Title", key: "variantTitle" },
-    { label: "SKU", key: "sku" },
-    { label: "Vendor", key: "vendor" },
-    { label: "Lead Time", align: "text-right" },
-    { label: "Current Qty", align: "text-right" },
-    { label: "On Order", align: "text-right" },
-    { label: "90 Day Sell Rate", align: "text-right" },
-    { label: "Weekly Sell Rate", align: "text-right" },
-    { label: "Qty Needed", align: "text-right" },
-    { label: "Qty Approved" },
-    { label: "Days of Inventory", align: "text-right" },
-    { label: "Status", key: "status" },
+  const headers: { label: string; key: ColumnFilterKey; align?: string; width: string }[] = [
+    { label: "Product Title", key: "productTitle", width: "w-[230px]" },
+    { label: "Variant", key: "variantTitle", width: "w-[120px]" },
+    { label: "SKU", key: "sku", width: "w-[115px]" },
+    { label: "Vendor", key: "vendor", width: "w-[140px]" },
+    { label: "Qty", key: "currentQty", align: "text-right", width: "w-[65px]" },
+    { label: "On Order", key: "onOrder", align: "text-right", width: "w-[78px]" },
+    { label: "90D Sales", key: "sell90Day", align: "text-right", width: "w-[82px]" },
+    { label: "Weekly", key: "weeklyRate", align: "text-right", width: "w-[70px]" },
+    { label: "Needed", key: "qtyNeeded", align: "text-right", width: "w-[75px]" },
+    { label: "Approved", key: "qtyApproved", width: "w-[120px]" },
+    { label: "Days", key: "daysOfInventory", align: "text-right", width: "w-[65px]" },
+    ...(showLeadColumns
+      ? [
+          { label: "LEAD TIME", key: "leadTime" as ColumnFilterKey, width: "w-[95px]" },
+          { label: "REVIEW PERIOD", key: "reviewPeriod" as ColumnFilterKey, width: "w-[115px]" },
+        ]
+      : []),
+    { label: "Status", key: "status", width: "w-[105px]" },
   ];
 
   return (
-    <div className="space-y-6">
+      <div className="space-y-4" onClick={() => {
+        setActiveApprovedSku(null);
+        setOpenDropdown(null);
+      }}>
       <PageTitle
         title="Inventory"
         description="Track stock levels, forecasting, vendor distribution, and inventory health."
       />
 
       {/* Top Controls */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="relative w-full xl:max-w-md">
-            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="relative w-[20ch] shrink-0">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search SKU, product, vendor..."
+              placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none focus:border-slate-900"
+              className="h-9 w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-xs text-slate-900 outline-none focus:border-slate-900"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-slate-700">Date:</label>
+              <label className="text-xs font-medium text-slate-700">Date:</label>
               <select
                 value={effectiveDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-900"
+                className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-900"
               >
                 {dates.map((d) => (
                   <option key={d} value={d}>{d}</option>
@@ -268,102 +505,265 @@ export default function InventoryPage() {
               </select>
             </div>
 
-            <button type="button" onClick={() => openUploadModal("inventory")} className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Upload size={15} /> Upload Inventory
+            <button
+              type="button"
+              onClick={() => {
+                setShowScheduleFields(false);
+                setSyncModalOpen(true);
+              }}
+              disabled={syncingShopify}
+              className="flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={syncingShopify ? "animate-spin" : ""} />
+              {syncingShopify ? "Syncing..." : "Sync Shopify"}
             </button>
-            <button type="button" onClick={() => openUploadModal("vidal90")} className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Upload size={15} /> Vidal 90 Day Sales
+
+            <button
+              type="button"
+              onClick={() => setShowLeadColumns((show) => !show)}
+              className={`flex h-9 items-center rounded-lg border px-3 text-xs font-semibold ${
+                showLeadColumns
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-300 text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              Show Lead Time
             </button>
-            <button type="button" onClick={() => openUploadModal("pd90")} className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Upload size={15} /> PD 90 Day Sales
+
+            <button
+              type="button"
+              onClick={downloadExcel}
+              disabled={loadingInventory || filteredRows.length === 0}
+              title="Download Excel"
+              aria-label="Download Excel"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download size={16} />
             </button>
-            <button type="button" onClick={() => openUploadModal("onorder")} className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Upload size={15} /> On Order
-            </button>
-          </div>
         </div>
+        {inventoryMessage && (
+          <div className={`mt-4 rounded-xl px-4 py-3 text-sm font-medium ${
+            inventoryMessage.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+          }`}>
+            {inventoryMessage.text}
+          </div>
+        )}
       </div>
 
+      {syncModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <h2 className="text-lg font-semibold text-slate-900">Shopify Sync</h2>
+              <button type="button" onClick={() => setSyncModalOpen(false)} className="rounded-lg p-2 hover:bg-slate-100">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-5 p-6">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={syncShopifyInventory}
+                  disabled={syncingShopify}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw size={16} className={syncingShopify ? "animate-spin" : ""} />
+                  Sync now
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowScheduleFields(true)}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <CalendarClock size={16} />
+                  Schedule
+                </button>
+              </div>
+
+              {showScheduleFields && (
+                <div className="space-y-4 rounded-xl border border-slate-200 p-4">
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Time</label>
+                    <input
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(event) => setScheduleTime(event.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Frequency</label>
+                    <select
+                      value={scheduleFrequency}
+                      onChange={(event) => setScheduleFrequency(event.target.value as SyncFrequency)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-900"
+                    >
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="custom">Custom days</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Days</label>
+                    <div className="mt-2 grid grid-cols-7 gap-2">
+                      {[
+                        { label: "S", value: "S" },
+                        { label: "M", value: "M" },
+                        { label: "T", value: "T" },
+                        { label: "W", value: "W" },
+                        { label: "T", value: "T2" },
+                        { label: "F", value: "F" },
+                        { label: "S", value: "S2" },
+                      ].map((day) => {
+                        const selected = scheduleFrequency === "daily" || scheduleDays.includes(day.value);
+
+                        return (
+                          <button
+                            key={day.value}
+                            type="button"
+                            onClick={() => toggleScheduleDay(day.value)}
+                            disabled={scheduleFrequency === "daily"}
+                            className={`h-10 rounded-xl border text-sm font-semibold ${
+                              selected
+                                ? "border-slate-900 bg-slate-900 text-white"
+                                : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                            } disabled:cursor-not-allowed`}
+                          >
+                            {day.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={saveSyncSchedule}
+                    disabled={scheduleFrequency !== "daily" && scheduleDays.length === 0}
+                    className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Save schedule
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
+          <table className="w-full table-fixed text-xs">
             <thead className="bg-slate-100 text-slate-700">
               <tr>
                 {headers.map((h) => (
-                  <th key={h.label} className={`whitespace-nowrap px-4 py-3 text-left font-semibold ${h.align ?? ""}`}>
-                    {h.key ? (
-                      <div className="relative">
+                  <th key={h.label} className={`${h.width} whitespace-nowrap px-2.5 py-2 text-left font-semibold ${h.align ?? ""}`}>
+                      <div className="relative" onClick={(event) => event.stopPropagation()}>
                         <button
                           type="button"
-                          onClick={() => setOpenDropdown(openDropdown === h.key ? null : h.key!)}
-                          className="flex items-center gap-1 hover:text-slate-900"
+                          disabled={loadingInventory || inventoryRows.length === 0}
+                          onClick={() => setOpenDropdown(openDropdown === h.key ? null : h.key)}
+                          className={`flex items-center gap-1 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-45 ${h.align === "text-right" ? "ml-auto justify-end" : ""}`}
                         >
                           {h.label}
                           <ChevronDown size={14} className={`transition-transform ${openDropdown === h.key ? "rotate-180" : ""}`} />
-                          {columnFilters[h.key!] !== "All" && (
-                            <span className="ml-1 rounded-full bg-slate-900 px-1.5 py-0.5 text-xs text-white">
-                              {columnFilters[h.key!]}
+                          {columnFilters[h.key] !== "All" && (
+                            <span className="ml-1 max-w-16 truncate rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] text-white">
+                              {columnFilters[h.key]}
                             </span>
                           )}
                         </button>
                         {openDropdown === h.key && (
-                          <div className="absolute left-0 top-full z-50 mt-1 min-w-[160px] rounded-xl border border-slate-200 bg-white shadow-lg">
-                            <button type="button" onClick={() => setColumnFilter(h.key!, "All")} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50">All</button>
-                            {uniqueValues(h.key!).map((val) => (
-                              <button key={val} type="button" onClick={() => setColumnFilter(h.key!, val)} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50">{val}</button>
+                          <div className="absolute left-0 top-full z-50 mt-1 max-h-64 min-w-[190px] overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                            <button type="button" onClick={() => setColumnFilter(h.key, "All")} className="block w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50">All</button>
+                            {uniqueValues(h.key).map((val) => (
+                              <button key={val} type="button" onClick={() => setColumnFilter(h.key, val)} className="block w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50">{val}</button>
                             ))}
                           </div>
                         )}
                       </div>
-                    ) : h.label}
                   </th>
                 ))}
               </tr>
             </thead>
 
             <tbody>
-              {filteredRows.map((row) => {
-                const approvedQty = approvedQtyBySku[row.sku] ?? 0;
+              {loadingInventory && (
+                <tr>
+                  <td colSpan={headers.length} className="px-5 py-8 text-center text-sm text-slate-500">Loading Shopify inventory...</td>
+                </tr>
+              )}
+              {!loadingInventory && sortedRows.map((row, index) => {
+                const approvedQty = approvedQtyBySku[row.sku] ?? row.qtyApproved;
                 const isActive = activeApprovedSku === row.sku;
+                const showApprovedControls = isActive || hoveredApprovedSku === row.sku;
+                const nextRow = sortedRows[index + 1];
+                const isLastInVendorGroup =
+                  !nextRow || getVendorGroup(nextRow.vendor) !== getVendorGroup(row.vendor);
                 return (
-                  <tr key={row.sku} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-4">{row.productTitle}</td>
-                    <td className="whitespace-nowrap px-4 py-4">{row.variantTitle}</td>
-                    <td className="whitespace-nowrap px-4 py-4 font-medium text-slate-700">{row.sku}</td>
-                    <td className="whitespace-nowrap px-4 py-4">{row.vendor}</td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right">{row.leadTime} days</td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{row.currentQty}</td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{row.onOrder}</td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{row.sell90Day}</td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{row.weeklyRate}</td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">{row.qtyNeeded}</td>
-                    <td className="px-4 py-4">
+                  <tr
+                    key={row.sku}
+                    className={`border-t border-slate-100 hover:bg-slate-50 ${
+                      isLastInVendorGroup ? "border-b-4 border-b-slate-300" : ""
+                    }`}
+                  >
+                    <td className="px-2.5 py-2.5"><div className="truncate" title={row.productTitle}>{row.productTitle}</div></td>
+                    <td className="px-2.5 py-2.5"><div className="truncate" title={row.variantTitle}>{row.variantTitle}</div></td>
+                    <td className="px-2.5 py-2.5 font-medium text-slate-700"><div className="truncate" title={row.sku}>{row.sku}</div></td>
+                    <td className="px-2.5 py-2.5"><div className="truncate" title={row.vendor}>{row.vendor}</div></td>
+                    <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.currentQty}</td>
+                    <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.onOrder}</td>
+                    <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.sell90Day}</td>
+                    <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.weeklyRate}</td>
+                    <td className="whitespace-nowrap px-2.5 py-2.5 text-right font-semibold tabular-nums">{row.qtyNeeded}</td>
+                    <td
+                      className="px-2.5 py-2.5"
+                      onMouseEnter={() => setHoveredApprovedSku(row.sku)}
+                      onMouseLeave={() => setHoveredApprovedSku(null)}
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <div className="flex items-center">
-                        <div className={`flex overflow-hidden rounded-xl border bg-white ${isActive ? "border-slate-900" : "border-slate-300"}`}>
-                          {isActive && (
-                            <button type="button" onClick={() => bumpQty(row.sku, -1)} className="flex h-9 w-9 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
-                              <Minus size={14} />
+                        <div className={`flex overflow-hidden rounded-lg border bg-white ${isActive ? "border-slate-900" : "border-slate-300"}`}>
+                          {showApprovedControls && (
+                            <button type="button" onClick={() => bumpQty(row.sku, -1, row.uom, approvedQty)} className="flex h-7 w-7 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
+                              <Minus size={12} />
                             </button>
                           )}
                           <input
                             type="number" min={0} value={approvedQty}
                             onFocus={() => setActiveApprovedSku(row.sku)}
                             onClick={() => setActiveApprovedSku(row.sku)}
-                            onChange={(e) => setApprovedQty(row.sku, Number(e.target.value))}
-                            className="h-9 w-20 border-0 bg-white px-2 text-center text-sm font-semibold outline-none"
+                            onChange={(e) => setApprovedQty(row.sku, Number(e.target.value), row.uom)}
+                            onBlur={(event) => setApprovedQty(row.sku, Number(event.currentTarget.value), row.uom, true)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                setApprovedQty(row.sku, Number(event.currentTarget.value), row.uom, true);
+                                event.currentTarget.blur();
+                              }
+                            }}
+                            className="h-7 w-14 border-0 bg-white px-1 text-center text-xs font-semibold outline-none"
                           />
-                          {isActive && (
-                            <button type="button" onClick={() => bumpQty(row.sku, 1)} className="flex h-9 w-9 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
-                              <Plus size={14} />
+                          {showApprovedControls && (
+                            <button type="button" onClick={() => bumpQty(row.sku, 1, row.uom, approvedQty)} className="flex h-7 w-7 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
+                              <Plus size={12} />
                             </button>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{row.daysOfInventory}</td>
-                    <td className="whitespace-nowrap px-4 py-4">
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.daysOfInventory}</td>
+                    {showLeadColumns && (
+                      <>
+                        <td className="whitespace-nowrap px-2.5 py-2.5"><div className="truncate" title={row.leadTime}>{row.leadTime || "-"}</div></td>
+                        <td className="whitespace-nowrap px-2.5 py-2.5"><div className="truncate" title={row.reviewPeriod}>{row.reviewPeriod || "-"}</div></td>
+                      </>
+                    )}
+                    <td className="whitespace-nowrap px-2.5 py-2.5">
+                      <span className={`inline-flex w-full justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                         row.status === "Healthy" ? "bg-green-100 text-green-700" :
                         row.status === "Low Stocks" ? "bg-yellow-100 text-yellow-700" :
                         "bg-red-100 text-red-700"
@@ -372,9 +772,9 @@ export default function InventoryPage() {
                   </tr>
                 );
               })}
-              {filteredRows.length === 0 && (
+              {!loadingInventory && filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="px-5 py-8 text-center text-sm text-slate-500">No inventory items found.</td>
+                  <td colSpan={headers.length} className="px-5 py-8 text-center text-sm text-slate-500">No inventory items found.</td>
                 </tr>
               )}
             </tbody>
@@ -382,65 +782,6 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Upload Modal */}
-      {uploadType && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-              <h2 className="text-lg font-semibold text-slate-900">{uploadLabels[uploadType]}</h2>
-              <button type="button" onClick={closeUploadModal} className="rounded-lg p-2 hover:bg-slate-100">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="space-y-5 p-6">
-              <div>
-                <label className="text-sm font-medium text-slate-700">Select Date</label>
-                <input
-                  type="date"
-                  value={uploadDate}
-                  onChange={(e) => setUploadDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-slate-700">Upload CSV File</label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                />
-              </div>
-
-              {uploadMessage && (
-                <div className={`rounded-xl px-4 py-3 text-sm font-medium ${
-                  uploadMessage.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-                }`}>
-                  {uploadMessage.text}
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
-              <button type="button" onClick={closeUploadModal} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleUpload}
-                disabled={!uploadFile || !uploadDate || uploading}
-                className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Upload size={16} />
-                {uploading ? "Uploading..." : "Upload"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
