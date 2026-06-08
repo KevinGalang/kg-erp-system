@@ -3,7 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
   buildInventoryForecastRows,
+  fetchPd90DaySalesBySku,
   fetchForecastMasterData,
+  fetchShipheroOnOrderBySku,
+  mergeSalesBySku,
 } from "@/lib/inventoryForecast";
 
 export const runtime = "nodejs";
@@ -258,7 +261,8 @@ async function shopifyGraphQL<T>(
 async function getInventoryRows(
   env: EnvMap,
   accessToken: string,
-  snapshotDate: string
+  snapshotDate: string,
+  discontinuedSkus: Set<string>
 ) {
   const rows: InventoryRow[] = [];
 
@@ -278,6 +282,10 @@ async function getInventoryRows(
       const variant = edge.node;
 
       if (!variant.sku) {
+        continue;
+      }
+
+      if (discontinuedSkus.has(variant.sku.trim().toLowerCase())) {
         continue;
       }
 
@@ -320,6 +328,24 @@ async function getInventoryRows(
   }
 
   return rows;
+}
+
+async function getDiscontinuedSkus(
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>
+) {
+  const { data, error } = await supabaseAdmin
+    .from("discontinued_items")
+    .select("sku");
+
+  if (error) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => String(row.sku ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  );
 }
 
 async function getSalesBySku(origin: string) {
@@ -392,7 +418,13 @@ export async function GET(request: Request) {
     const supabaseAdmin = getSupabaseAdmin(env);
     const accessToken = await getShopifyAccessToken(env);
     const snapshotDate = new Date().toISOString().slice(0, 10);
-    const rows = await getInventoryRows(env, accessToken, snapshotDate);
+    const discontinuedSkus = await getDiscontinuedSkus(supabaseAdmin);
+    const rows = await getInventoryRows(
+      env,
+      accessToken,
+      snapshotDate,
+      discontinuedSkus
+    );
 
     const { error: deleteError } = await supabaseAdmin
       .from("shopify_inventory_snapshots")
@@ -412,14 +444,21 @@ export async function GET(request: Request) {
       });
     }
 
-    const salesBySku = await getSalesBySku(new URL(request.url).origin);
+    const shopifySalesBySku = await getSalesBySku(new URL(request.url).origin);
+    const pdSalesBySku = await fetchPd90DaySalesBySku(
+      supabaseAdmin,
+      snapshotDate
+    );
+    const salesBySku = mergeSalesBySku(shopifySalesBySku, pdSalesBySku);
+    const onOrderBySku = await fetchShipheroOnOrderBySku(supabaseAdmin);
     const { vendorByName, itemBySku } =
       await fetchForecastMasterData(supabaseAdmin);
     const forecastRows = buildInventoryForecastRows(
       rows,
       salesBySku,
       vendorByName,
-      itemBySku
+      itemBySku,
+      onOrderBySku
     );
 
     const forecastBySku = new Map(

@@ -23,6 +23,16 @@ export type ItemMasterRow = {
   uom: string | null;
 };
 
+type Pd90DaySaleRow = {
+  product_variant_sku: string | null;
+  quantity: number | null;
+};
+
+type ShipheroIntransitRow = {
+  sku: string | null;
+  quantity: number | null;
+};
+
 export type InventoryForecastDbRow = {
   snapshot_date: string;
   product_title: string;
@@ -67,6 +77,28 @@ export type InventoryForecastClientRow = {
 
 function normalizeKey(value: string) {
   return value.trim().toLowerCase();
+}
+
+function getPdWeekStart(snapshotDate: string) {
+  const date = new Date(`${snapshotDate}T00:00:00.000Z`);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const firstPdDate = Date.UTC(2026, 5, 8);
+  const lastPdDate = Date.UTC(2026, 7, 31);
+  const snapshotTime = date.getTime();
+
+  if (snapshotTime < firstPdDate || snapshotTime > lastPdDate) {
+    return null;
+  }
+
+  const day = date.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + mondayOffset);
+
+  return date.toISOString().slice(0, 10);
 }
 
 function parsePositiveNumber(value: string | null | undefined) {
@@ -178,11 +210,94 @@ export async function fetchForecastMasterData(supabaseAdmin: SupabaseClient) {
   return { vendorByName, itemBySku };
 }
 
+export async function fetchPd90DaySalesBySku(
+  supabaseAdmin: SupabaseClient,
+  snapshotDate: string
+) {
+  const weekStart = getPdWeekStart(snapshotDate);
+  const salesBySku = new Map<string, number>();
+
+  if (!weekStart) {
+    return salesBySku;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("pd_90_day_sale")
+    .select("product_variant_sku, quantity")
+    .eq("week_start", weekStart);
+
+  if (error) {
+    throw new Error(`Supabase PD 90 day sale fetch failed: ${error.message}`);
+  }
+
+  for (const row of (data ?? []) as Pd90DaySaleRow[]) {
+    const skuKey = normalizeKey(String(row.product_variant_sku ?? ""));
+
+    if (!skuKey) {
+      continue;
+    }
+
+    salesBySku.set(skuKey, (salesBySku.get(skuKey) ?? 0) + Number(row.quantity ?? 0));
+  }
+
+  return salesBySku;
+}
+
+export async function fetchShipheroOnOrderBySku(supabaseAdmin: SupabaseClient) {
+  const { data, error } = await supabaseAdmin
+    .from("shiphero_intransit_items")
+    .select("sku, quantity");
+  const onOrderBySku = new Map<string, number>();
+
+  if (error) {
+    const missingTable =
+      error.message.toLowerCase().includes("does not exist") ||
+      error.message.toLowerCase().includes("schema cache");
+
+    if (missingTable) {
+      return onOrderBySku;
+    }
+
+    throw new Error(`Supabase Shiphero in-transit fetch failed: ${error.message}`);
+  }
+
+  for (const row of (data ?? []) as ShipheroIntransitRow[]) {
+    const skuKey = normalizeKey(String(row.sku ?? ""));
+
+    if (!skuKey) {
+      continue;
+    }
+
+    onOrderBySku.set(skuKey, (onOrderBySku.get(skuKey) ?? 0) + Number(row.quantity ?? 0));
+  }
+
+  return onOrderBySku;
+}
+
+export function mergeSalesBySku(...salesMaps: Map<string, number>[]) {
+  const merged = new Map<string, number>();
+
+  for (const salesMap of salesMaps) {
+    for (const [sku, quantity] of salesMap) {
+      const skuKey = normalizeKey(sku);
+
+      if (!skuKey) {
+        continue;
+      }
+
+      merged.set(skuKey, (merged.get(skuKey) ?? 0) + Number(quantity ?? 0));
+    }
+  }
+
+  return merged;
+}
+
 export function buildInventoryForecastRows(
   snapshotRows: ShopifySnapshotRow[],
   salesBySku: Map<string, number>,
   vendorByName: Map<string, VendorMasterRow>,
-  itemBySku: Map<string, ItemMasterRow>
+  itemBySku: Map<string, ItemMasterRow>,
+  onOrderBySku = new Map<string, number>()
 ) {
   const grouped = new Map<string, InventoryForecastDbRow>();
 
@@ -218,13 +333,13 @@ export function buildInventoryForecastRows(
       ? itemMasterVendor
       : row.vendor ?? "";
     const vendorMaster = vendorByName.get(normalizeKey(vendor));
-    const sell90Day = salesBySku.get(row.sku) ?? 0;
+    const sell90Day = salesBySku.get(skuKey) ?? salesBySku.get(row.sku) ?? 0;
     const weeklyRate = Math.ceil((sell90Day / 90) * 7);
     const leadTime = vendorMaster?.lead_time ?? "";
     const reviewPeriod = vendorMaster?.review_period ?? "";
     const leadTimeWeeks = parseWeeks(leadTime);
     const reviewPeriodWeeks = parseWeeks(reviewPeriod);
-    const onOrder = 0;
+    const onOrder = onOrderBySku.get(skuKey) ?? 0;
     const amountNeeded = getAmountNeeded(
       weeklyRate,
       leadTimeWeeks,

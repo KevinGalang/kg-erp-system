@@ -9,6 +9,10 @@ import {
   ClipboardList,
   BarChart3,
   Truck,
+  CalendarDays,
+  CalendarRange,
+  Folder,
+  FileX2,
   BookOpen,
   Building2,
   PackageSearch,
@@ -20,8 +24,9 @@ import {
 
 type ChildItem = {
   label: string;
-  href: string;
+  href?: string;
   icon: React.ElementType;
+  children?: ChildItem[];
 };
 
 type MenuItem = {
@@ -38,7 +43,19 @@ const menuItems: MenuItem[] = [
   {
     label: "Reports",
     icon: BarChart3,
-    children: [{ label: "In-transit", href: "/reports/in-transit", icon: Truck }],
+    children: [
+      { label: "In-transit", href: "/reports/in-transit", icon: Truck },
+      {
+        label: "Weekly Reports",
+        href: "/reports/weekly",
+        icon: CalendarDays,
+      },
+      {
+        label: "Monthly Reports",
+        href: "/reports/monthly",
+        icon: CalendarRange,
+      },
+    ],
   },
   {
     label: "Masters",
@@ -49,6 +66,17 @@ const menuItems: MenuItem[] = [
         label: "Item Master List",
         href: "/masters/item-master-list",
         icon: PackageSearch,
+      },
+    ],
+  },
+  {
+    label: "Files",
+    icon: Folder,
+    children: [
+      {
+        label: "Discontinued Items",
+        href: "/files/discontinued-items",
+        icon: FileX2,
       },
     ],
   },
@@ -70,6 +98,7 @@ export default function Sidebar() {
 
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({
     Reports: pathname.startsWith("/reports"),
+    Files: pathname.startsWith("/files"),
     Masters: pathname.startsWith("/masters"),
     "Manage User": pathname.startsWith("/manage-user"),
   });
@@ -81,7 +110,9 @@ export default function Sidebar() {
     }));
   };
 
-  const isActive = (href: string) => pathname === href;
+  const isActive = (href?: string) => Boolean(href) && pathname === href;
+  const isChildOpen = (child: ChildItem) =>
+    Boolean(child.children?.some((nested) => isActive(nested.href)));
 
   return (
     <aside className="flex h-screen w-full flex-col bg-slate-900 text-slate-300">
@@ -132,11 +163,57 @@ export default function Sidebar() {
                 <div className="mt-1 space-y-1 pl-4">
                   {item.children?.map((child) => {
                     const ChildIcon = child.icon;
+                    const childOpen = openMenus[child.label] || isChildOpen(child);
+
+                    if (child.children) {
+                      return (
+                        <div key={child.label}>
+                          <button
+                            type="button"
+                            onClick={() => toggleMenu(child.label)}
+                            className="flex w-full items-center justify-between rounded-xl px-4 py-2.5 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-white"
+                          >
+                            <span className="flex items-center gap-3">
+                              <ChildIcon size={18} />
+                              <span>{child.label}</span>
+                            </span>
+                            {childOpen ? (
+                              <ChevronDown size={16} />
+                            ) : (
+                              <ChevronRight size={16} />
+                            )}
+                          </button>
+
+                          {childOpen && (
+                            <div className="mt-1 space-y-1 pl-4">
+                              {child.children.map((nested) => {
+                                const NestedIcon = nested.icon;
+
+                                return (
+                                  <Link
+                                    key={nested.href}
+                                    href={nested.href ?? "#"}
+                                    className={`flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm transition ${
+                                      isActive(nested.href)
+                                        ? "bg-white text-slate-900 shadow-sm"
+                                        : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                                    }`}
+                                  >
+                                    <NestedIcon size={18} />
+                                    <span>{nested.label}</span>
+                                  </Link>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
 
                     return (
                       <Link
                         key={child.href}
-                        href={child.href}
+                        href={child.href ?? "#"}
                         className={`flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm transition ${
                           isActive(child.href)
                             ? "bg-white text-slate-900 shadow-sm"

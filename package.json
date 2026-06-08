@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "next start",
-  "lint": "eslint",
-  "deploy": "opennextjs-cloudflare build"
-},
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "deploy": "opennextjs-cloudflare build",
+    "sync:shiphero-intransit": "node scripts/sync-shiphero-intransit.mjs"
+  },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.19.11",
     "@supabase/supabase-js": "^2.105.4",
@@ -27,6 +28,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "playwright": "^1.60.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "wrangler": "^4.95.0"

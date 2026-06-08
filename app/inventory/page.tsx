@@ -46,9 +46,12 @@ type SyncFrequency = "daily" | "weekly" | "custom";
 
 type ShopifyInventoryResponse = {
   snapshotDate: string | null;
+  dates?: string[];
   rows: InventoryRow[];
   error?: string;
 };
+
+type ApprovedSaveState = "idle" | "saving" | "saved" | "error";
 
 function escapeHtml(value: string | number) {
   return String(value)
@@ -94,6 +97,18 @@ function getVendorGroup(vendor: string) {
 
 function isVidalVendor(vendor: string) {
   return normalizeVendor(vendor).startsWith("vidal - ");
+}
+
+function isVidalExemplarVendor(vendor: string) {
+  return normalizeVendor(vendor) === "vidal - exemplar";
+}
+
+function getHighDaysThreshold(row: InventoryRow) {
+  return isVidalExemplarVendor(row.vendor) ? 201 : 40;
+}
+
+function isHighDaysRow(row: InventoryRow) {
+  return row.daysOfInventory >= getHighDaysThreshold(row);
 }
 
 function getSavedSyncSchedule() {
@@ -143,10 +158,13 @@ export default function InventoryPage() {
   const [inventoryMessage, setInventoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [search, setSearch] = useState("");
   const [approvedQtyBySku, setApprovedQtyBySku] = useState<Record<string, number>>({});
+  const [approvedSaveBySku, setApprovedSaveBySku] = useState<Record<string, ApprovedSaveState>>({});
   const [activeApprovedSku, setActiveApprovedSku] = useState<string | null>(null);
   const [hoveredApprovedSku, setHoveredApprovedSku] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>("");
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [showLeadColumns, setShowLeadColumns] = useState(false);
+  const [showHighDaysOnly, setShowHighDaysOnly] = useState(false);
   const [columnFilters, setColumnFilters] = useState<Record<ColumnFilterKey, string>>({
     productTitle: "All",
     variantTitle: "All",
@@ -165,11 +183,23 @@ export default function InventoryPage() {
   });
   const [openDropdown, setOpenDropdown] = useState<ColumnFilterKey | null>(null);
 
-  const loadShopifyInventory = async () => {
+  const loadShopifyInventory = async (refresh = false, date = selectedDate) => {
     setLoadingInventory(true);
 
     try {
-      const response = await fetch("/api/inventory/shopify-snapshot");
+      const params = new URLSearchParams();
+
+      if (refresh) {
+        params.set("refresh", "1");
+      }
+
+      if (date) {
+        params.set("date", date);
+      }
+
+      const response = await fetch(
+        `/api/inventory/shopify-snapshot${params.toString() ? `?${params}` : ""}`
+      );
       const data = (await response.json()) as ShopifyInventoryResponse;
 
       if (!response.ok) {
@@ -177,6 +207,10 @@ export default function InventoryPage() {
       }
 
       setInventoryRows(data.rows);
+      setAvailableDates(data.dates ?? []);
+      if (!date && data.snapshotDate) {
+        setSelectedDate(data.snapshotDate);
+      }
       setInventoryMessage(null);
     } catch (error) {
       const message =
@@ -206,6 +240,8 @@ export default function InventoryPage() {
         }
 
         setInventoryRows(data.rows);
+        setAvailableDates(data.dates ?? []);
+        setSelectedDate(data.snapshotDate ?? "");
         setInventoryMessage(null);
       })
       .catch((error) => {
@@ -229,8 +265,12 @@ export default function InventoryPage() {
   }, []);
 
   const dates = useMemo(() => {
-    return Array.from(new Set(inventoryRows.map((r) => r.date))).sort((a, b) => b.localeCompare(a));
-  }, [inventoryRows]);
+    return availableDates.length
+      ? availableDates
+      : Array.from(new Set(inventoryRows.map((r) => r.date))).sort((a, b) =>
+          b.localeCompare(a)
+        );
+  }, [availableDates, inventoryRows]);
 
   const latestDate = dates[0] ?? "";
   const effectiveDate = selectedDate || latestDate;
@@ -264,12 +304,21 @@ export default function InventoryPage() {
       const matchesColumns = (Object.keys(columnFilters) as ColumnFilterKey[]).every(
         (key) => columnFilters[key] === "All" || getFilterValue(row, key) === columnFilters[key]
       );
-      return matchesDate && matchesSearch && matchesColumns;
+      const matchesDaysMode = showHighDaysOnly ? isHighDaysRow(row) : !isHighDaysRow(row);
+      return matchesDate && matchesSearch && matchesColumns && matchesDaysMode;
     });
-  }, [inventoryRows, search, effectiveDate, columnFilters, getFilterValue]);
+  }, [inventoryRows, search, effectiveDate, columnFilters, getFilterValue, showHighDaysOnly]);
 
   const sortedRows = useMemo(() => {
     return [...filteredRows].sort((a, b) => {
+      const exemplarCompare =
+        Number(isVidalExemplarVendor(a.vendor)) -
+        Number(isVidalExemplarVendor(b.vendor));
+
+      if (exemplarCompare !== 0) {
+        return exemplarCompare;
+      }
+
       const groupCompare = getVendorGroup(a.vendor).localeCompare(
         getVendorGroup(b.vendor),
         undefined,
@@ -300,6 +349,10 @@ export default function InventoryPage() {
     });
   }, [filteredRows]);
 
+  const dateRows = useMemo(() => {
+    return inventoryRows.filter((row) => row.date === effectiveDate);
+  }, [inventoryRows, effectiveDate]);
+
   const syncShopifyInventory = async () => {
     setSyncingShopify(true);
     setInventoryMessage(null);
@@ -317,7 +370,7 @@ export default function InventoryPage() {
         type: "success",
         text: `Synced ${data.inserted ?? 0} Shopify rows and saved ${data.forecastSaved ?? 0} forecast rows for ${data.snapshotDate}.`,
       });
-      await loadShopifyInventory();
+      await loadShopifyInventory(true, selectedDate);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Shopify sync failed.";
@@ -357,7 +410,17 @@ export default function InventoryPage() {
   };
 
   const downloadExcel = () => {
-    const exportRows = filteredRows.map((row) => ({
+    const rowsToExport = sortedRows.length ? sortedRows : dateRows;
+
+    if (rowsToExport.length === 0) {
+      setInventoryMessage({
+        type: "error",
+        text: "No inventory rows are available to download for this date.",
+      });
+      return;
+    }
+
+    const exportRows = rowsToExport.map((row) => ({
       "Product Title": row.productTitle,
       "Variant Title": row.variantTitle,
       SKU: row.sku,
@@ -430,16 +493,63 @@ export default function InventoryPage() {
     URL.revokeObjectURL(url);
   };
 
+  const saveApprovedQty = async (row: InventoryRow, value: number) => {
+    setApprovedSaveBySku((prev) => ({ ...prev, [row.sku]: "saving" }));
+
+    try {
+      const response = await fetch("/api/inventory/shopify-snapshot", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          snapshotDate: row.date,
+          sku: row.sku,
+          qtyApproved: value,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to save approved quantity.");
+      }
+
+      setInventoryRows((current) =>
+        current.map((item) =>
+          item.date === row.date && item.sku === row.sku
+            ? { ...item, qtyApproved: value }
+            : item
+        )
+      );
+      setApprovedSaveBySku((prev) => ({ ...prev, [row.sku]: "saved" }));
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to save approved quantity.";
+      setInventoryMessage({ type: "error", text: message });
+      setApprovedSaveBySku((prev) => ({ ...prev, [row.sku]: "error" }));
+    }
+  };
+
   const setApprovedQty = (sku: string, value: number, uom = 1, normalize = false) => {
     const nextValue = normalize ? roundUpToUom(value, uom) : Math.max(0, value);
     setApprovedQtyBySku((prev) => ({ ...prev, [sku]: nextValue }));
   };
 
-  const bumpQty = (sku: string, direction: 1 | -1, uom: number, fallback = 0) => {
-    const current = approvedQtyBySku[sku] ?? fallback;
-    const step = uom > 0 ? uom : 1;
+  const commitApprovedQty = (row: InventoryRow, value: number) => {
+    const nextValue = roundUpToUom(value, row.uom);
+    setApprovedQtyBySku((prev) => ({ ...prev, [row.sku]: nextValue }));
+    void saveApprovedQty(row, nextValue);
+  };
+
+  const bumpQty = (row: InventoryRow, direction: 1 | -1, fallback = 0) => {
+    const current = approvedQtyBySku[row.sku] ?? fallback;
+    const step = row.uom > 0 ? row.uom : 1;
     const nextValue = current + direction * step;
-    setApprovedQty(sku, nextValue, step, true);
+    const approvedValue = roundUpToUom(nextValue, step);
+    setApprovedQtyBySku((prev) => ({ ...prev, [row.sku]: approvedValue }));
+    void saveApprovedQty(row, approvedValue);
   };
 
   const setColumnFilter = (key: ColumnFilterKey, value: string) => {
@@ -496,7 +606,10 @@ export default function InventoryPage() {
               <label className="text-xs font-medium text-slate-700">Date:</label>
               <select
                 value={effectiveDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => {
+                  setSelectedDate(e.target.value);
+                  void loadShopifyInventory(false, e.target.value);
+                }}
                 className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-slate-900"
               >
                 {dates.map((d) => (
@@ -532,8 +645,20 @@ export default function InventoryPage() {
 
             <button
               type="button"
+              onClick={() => setShowHighDaysOnly((show) => !show)}
+              className={`flex h-9 items-center rounded-lg border px-3 text-xs font-semibold ${
+                showHighDaysOnly
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-300 text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              Show 40D +
+            </button>
+
+            <button
+              type="button"
               onClick={downloadExcel}
-              disabled={loadingInventory || filteredRows.length === 0}
+              disabled={loadingInventory || dateRows.length === 0}
               title="Download Excel"
               aria-label="Download Excel"
               className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -729,7 +854,7 @@ export default function InventoryPage() {
                       <div className="flex items-center">
                         <div className={`flex overflow-hidden rounded-lg border bg-white ${isActive ? "border-slate-900" : "border-slate-300"}`}>
                           {showApprovedControls && (
-                            <button type="button" onClick={() => bumpQty(row.sku, -1, row.uom, approvedQty)} className="flex h-7 w-7 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
+                            <button type="button" onClick={() => bumpQty(row, -1, approvedQty)} className="flex h-7 w-7 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
                               <Minus size={12} />
                             </button>
                           )}
@@ -738,21 +863,27 @@ export default function InventoryPage() {
                             onFocus={() => setActiveApprovedSku(row.sku)}
                             onClick={() => setActiveApprovedSku(row.sku)}
                             onChange={(e) => setApprovedQty(row.sku, Number(e.target.value), row.uom)}
-                            onBlur={(event) => setApprovedQty(row.sku, Number(event.currentTarget.value), row.uom, true)}
+                            onBlur={(event) => commitApprovedQty(row, Number(event.currentTarget.value))}
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
-                                setApprovedQty(row.sku, Number(event.currentTarget.value), row.uom, true);
+                                commitApprovedQty(row, Number(event.currentTarget.value));
                                 event.currentTarget.blur();
                               }
                             }}
                             className="h-7 w-14 border-0 bg-white px-1 text-center text-xs font-semibold outline-none"
                           />
                           {showApprovedControls && (
-                            <button type="button" onClick={() => bumpQty(row.sku, 1, row.uom, approvedQty)} className="flex h-7 w-7 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
+                            <button type="button" onClick={() => bumpQty(row, 1, approvedQty)} className="flex h-7 w-7 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
                               <Plus size={12} />
                             </button>
                           )}
                         </div>
+                        {approvedSaveBySku[row.sku] === "saving" && (
+                          <span className="ml-1 text-[10px] text-slate-400">Saving</span>
+                        )}
+                        {approvedSaveBySku[row.sku] === "saved" && (
+                          <span className="ml-1 text-[10px] text-green-600">Saved</span>
+                        )}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.daysOfInventory}</td>

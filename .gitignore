@@ -6,3 +6,4 @@
 .env.local
 dev-server.log
 tsconfig.tsbuildinfo
+.shiphero-session/
