@@ -2,7 +2,23 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PageTitle from "@/components/PageTitle";
-import { CalendarClock, Download, RefreshCw, Search, Plus, Minus, ChevronDown, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarClock,
+  ChevronDown,
+  Download,
+  FileText,
+  Globe,
+  Mail,
+  Minus,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Send,
+  X,
+} from "lucide-react";
+import jsPDF from "jspdf";
 
 type InventoryStatus = "Healthy" | "Low Stocks" | "Critical";
 
@@ -48,6 +64,20 @@ type ShopifyInventoryResponse = {
   snapshotDate: string | null;
   dates?: string[];
   rows: InventoryRow[];
+  error?: string;
+};
+
+type VendorRow = {
+  mfg: string;
+  order_at: string;
+  link: string;
+  contact: string;
+  email: string;
+  phone: string;
+};
+
+type VendorResponse = {
+  vendors: VendorRow[];
   error?: string;
 };
 
@@ -111,6 +141,60 @@ function isHighDaysRow(row: InventoryRow) {
   return row.daysOfInventory >= getHighDaysThreshold(row);
 }
 
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function parseLocalDate(dateValue: string | Date | undefined) {
+  if (dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) {
+    return dateValue;
+  }
+
+  const value = String(dateValue || "").trim();
+
+  if (!value) {
+    return new Date();
+  }
+
+  const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (isoMatch) {
+    return new Date(
+      Number(isoMatch[1]),
+      Number(isoMatch[2]) - 1,
+      Number(isoMatch[3])
+    );
+  }
+
+  const parsedDate = new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+}
+
+function formatPoDate(dateValue: string | Date) {
+  const date = parseLocalDate(dateValue);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+
+  return `${month}.${day}.${year}`;
+}
+
+function buildPoNumber(mfg: string, dateValue: string | Date) {
+  return `${mfg} ${formatPoDate(dateValue)}`;
+}
+
+function getPurchaseOrderDate(dateValue: string | Date | undefined) {
+  const date = parseLocalDate(dateValue);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function normalizeText(value: string) {
+  return value.trim().toLowerCase();
+}
+
 function getSavedSyncSchedule() {
   const defaultSchedule = {
     time: "08:00",
@@ -148,6 +232,7 @@ function getSavedSyncSchedule() {
 
 export default function InventoryPage() {
   const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([]);
+  const [vendors, setVendors] = useState<VendorRow[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [syncingShopify, setSyncingShopify] = useState(false);
   const [syncModalOpen, setSyncModalOpen] = useState(false);
@@ -158,13 +243,16 @@ export default function InventoryPage() {
   const [inventoryMessage, setInventoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [search, setSearch] = useState("");
   const [approvedQtyBySku, setApprovedQtyBySku] = useState<Record<string, number>>({});
-  const [approvedSaveBySku, setApprovedSaveBySku] = useState<Record<string, ApprovedSaveState>>({});
+  const [, setApprovedSaveBySku] = useState<Record<string, ApprovedSaveState>>({});
   const [activeApprovedSku, setActiveApprovedSku] = useState<string | null>(null);
   const [hoveredApprovedSku, setHoveredApprovedSku] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [showLeadColumns, setShowLeadColumns] = useState(false);
   const [showHighDaysOnly, setShowHighDaysOnly] = useState(false);
+  const [activePoVendor, setActivePoVendor] = useState<string | null>(null);
+  const [savedPoNumber, setSavedPoNumber] = useState("");
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
   const [columnFilters, setColumnFilters] = useState<Record<ColumnFilterKey, string>>({
     productTitle: "All",
     variantTitle: "All",
@@ -264,6 +352,35 @@ export default function InventoryPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let ignore = false;
+
+    fetch("/api/vendor-list")
+      .then(async (response) => {
+        const data = (await response.json()) as VendorResponse;
+
+        if (!response.ok) {
+          throw new Error(data.error || "Unable to load vendor list.");
+        }
+
+        return data.vendors;
+      })
+      .then((loadedVendors) => {
+        if (!ignore) {
+          setVendors(loadedVendors);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setVendors([]);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
   const dates = useMemo(() => {
     return availableDates.length
       ? availableDates
@@ -352,6 +469,255 @@ export default function InventoryPage() {
   const dateRows = useMemo(() => {
     return inventoryRows.filter((row) => row.date === effectiveDate);
   }, [inventoryRows, effectiveDate]);
+
+  const getApprovedQty = useCallback((row: InventoryRow) => {
+    return Number(approvedQtyBySku[row.sku] ?? row.qtyApproved ?? 0);
+  }, [approvedQtyBySku]);
+
+  const poRows = useMemo(() => {
+    if (!activePoVendor) {
+      return [] as InventoryRow[];
+    }
+
+    return dateRows
+      .filter((row) => row.vendor === activePoVendor && getApprovedQty(row) > 0)
+      .sort((a, b) =>
+        a.productTitle.localeCompare(b.productTitle, undefined, {
+          sensitivity: "base",
+        })
+      );
+  }, [activePoVendor, dateRows, getApprovedQty]);
+
+  const poApprovedTotal = poRows.reduce(
+    (total, row) => total + getApprovedQty(row),
+    0
+  );
+
+  useEffect(() => {
+    let ignore = false;
+
+    if (!activePoVendor) {
+      setSavedPoNumber("");
+      return () => {
+        ignore = true;
+      };
+    }
+
+    const expectedPoNumber = buildPoNumber(activePoVendor, getTodayDate());
+
+    fetch("/api/purchase-orders")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Unable to check purchase orders.");
+        return data.purchaseOrders || [];
+      })
+      .then((purchaseOrders) => {
+        if (ignore) return;
+        const exists = purchaseOrders.some(
+          (order: { po_number?: string }) => order.po_number === expectedPoNumber
+        );
+        setSavedPoNumber(exists ? expectedPoNumber : "");
+      })
+      .catch(() => {
+        if (!ignore) setSavedPoNumber("");
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [activePoVendor]);
+
+  const activeVendorDetails = useMemo(() => {
+    if (!activePoVendor) {
+      return null;
+    }
+
+    return (
+      vendors.find((vendor) => normalizeText(vendor.mfg) === normalizeText(activePoVendor)) ??
+      null
+    );
+  }, [activePoVendor, vendors]);
+
+  const openOrderDestination = () => {
+    if (!activeVendorDetails) {
+      setInventoryMessage({
+        type: "error",
+        text: "No vendor order details found for this vendor.",
+      });
+      return;
+    }
+
+    if (activeVendorDetails.order_at.toLowerCase().includes("website")) {
+      const href = activeVendorDetails.link.startsWith("http")
+        ? activeVendorDetails.link
+        : `https://${activeVendorDetails.link}`;
+      window.open(href, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    setInventoryMessage({
+      type: "success",
+      text: `Order by email: ${activeVendorDetails.email || activeVendorDetails.link}`,
+    });
+  };
+
+  const ensurePoNumber = () => {
+    const poCreatedDate = getTodayDate();
+    return buildPoNumber(activePoVendor ?? poRows[0]?.vendor ?? "PO", poCreatedDate);
+  };
+
+  const buildPurchaseOrderPayloadRows = (poNumber: string) => {
+    const poCreatedDate = getTodayDate();
+
+    return poRows
+      .filter((row) => getApprovedQty(row) > 0)
+      .map((row) => ({
+        date: poCreatedDate,
+        mfg: row.vendor,
+        product_title: row.productTitle,
+        variant_title: row.variantTitle,
+        sku: row.sku,
+        qty: getApprovedQty(row),
+        qty_received: 0,
+        diff: 0,
+        po_number: poNumber,
+        status: "Pending",
+      }));
+  };
+
+  const savePurchaseOrder = async () => {
+    if (!activePoVendor || poRows.length === 0) {
+      setInventoryMessage({
+        type: "error",
+        text: "Add approved quantities for this vendor before creating a purchase order.",
+      });
+      return "";
+    }
+
+    const poNumber = ensurePoNumber();
+    const payloadRows = buildPurchaseOrderPayloadRows(poNumber);
+
+    if (payloadRows.length === 0) {
+      setInventoryMessage({
+        type: "error",
+        text: "Only rows with Amount Approved greater than 0 can be saved to Purchase Orders.",
+      });
+      return "";
+    }
+
+    try {
+      const response = await fetch("/api/purchase-orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ items: payloadRows }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to create purchase order.");
+      }
+
+      setSavedPoNumber(poNumber);
+      setInventoryMessage({
+        type: "success",
+        text: data.updatedExisting
+          ? `Updated existing ${poNumber} in Purchase Orders.`
+          : `Saved ${poNumber} to Purchase Orders as Pending.`,
+      });
+
+      return poNumber;
+    } catch (error) {
+      setInventoryMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to create purchase order.",
+      });
+      return "";
+    }
+  };
+
+  const generatePurchaseOrderPdf = (mode: "preview" | "download") => {
+    if (!activePoVendor || poRows.length === 0) {
+      setInventoryMessage({
+        type: "error",
+        text: "No approved quantities are available for this vendor.",
+      });
+      return;
+    }
+
+    const poNumber = ensurePoNumber();
+    const doc = new jsPDF();
+    let y = 18;
+
+    doc.setFontSize(16);
+    doc.text("Purchase Order", 14, y);
+    y += 9;
+    doc.setFontSize(10);
+    doc.text(`PO Number: ${poNumber}`, 14, y);
+    y += 6;
+    doc.text(`Vendor: ${activePoVendor}`, 14, y);
+    y += 6;
+    doc.text(`Date: ${getTodayDate()}`, 14, y);
+    y += 9;
+
+    doc.setFontSize(9);
+    doc.text("SKU", 14, y);
+    doc.text("Item", 48, y);
+    doc.text("Approved", 178, y, { align: "right" });
+    y += 4;
+    doc.line(14, y, 195, y);
+    y += 6;
+
+    poRows.forEach((row) => {
+      const itemName =
+        row.variantTitle && row.variantTitle !== "Default Title"
+          ? `${row.productTitle} - ${row.variantTitle}`
+          : row.productTitle;
+      const itemLines = doc.splitTextToSize(itemName, 110);
+
+      if (y > 270) {
+        doc.addPage();
+        y = 18;
+      }
+
+      doc.text(row.sku || "-", 14, y);
+      doc.text(itemLines, 48, y);
+      doc.text(String(getApprovedQty(row)), 178, y, { align: "right" });
+      y += Math.max(6, itemLines.length * 5);
+    });
+
+    y += 4;
+    doc.line(14, y, 195, y);
+    y += 7;
+    doc.setFontSize(11);
+    doc.text(`Total approved qty: ${poApprovedTotal}`, 14, y);
+
+    if (mode === "preview") {
+      window.open(doc.output("bloburl"), "_blank");
+      return;
+    }
+
+    doc.save(`${poNumber}.pdf`);
+  };
+
+  const emailPreview = useMemo(() => {
+    const poDate = getPurchaseOrderDate(effectiveDate || poRows[0]?.date);
+    const poNumber = savedPoNumber || buildPoNumber(activePoVendor ?? poRows[0]?.vendor ?? "PO", poDate);
+    const lines = poRows
+      .map((row) => `${row.sku} - ${row.productTitle}: ${getApprovedQty(row)}`)
+      .join("\n");
+
+    return {
+      to: "Vendor email pending",
+      subject: `Purchase Order ${poNumber}`,
+      body: `Hello,\n\nPlease process the attached purchase order for ${activePoVendor ?? "this vendor"}.\n\n${lines}\n\nThank you.`,
+    };
+  }, [activePoVendor, poRows, savedPoNumber, getApprovedQty, effectiveDate]);
 
   const syncShopifyInventory = async () => {
     setSyncingShopify(true);
@@ -567,7 +933,7 @@ export default function InventoryPage() {
     { label: "90D Sales", key: "sell90Day", align: "text-right", width: "w-[82px]" },
     { label: "Weekly", key: "weeklyRate", align: "text-right", width: "w-[70px]" },
     { label: "Needed", key: "qtyNeeded", align: "text-right", width: "w-[75px]" },
-    { label: "Approved", key: "qtyApproved", width: "w-[120px]" },
+    { label: "Approved", key: "qtyApproved", width: "w-[132px]" },
     { label: "Days", key: "daysOfInventory", align: "text-right", width: "w-[65px]" },
     ...(showLeadColumns
       ? [
@@ -575,7 +941,7 @@ export default function InventoryPage() {
           { label: "REVIEW PERIOD", key: "reviewPeriod" as ColumnFilterKey, width: "w-[115px]" },
         ]
       : []),
-    { label: "Status", key: "status", width: "w-[105px]" },
+    { label: "Update", key: "status", width: "w-[105px]" },
   ];
 
   return (
@@ -584,7 +950,7 @@ export default function InventoryPage() {
         setOpenDropdown(null);
       }}>
       <PageTitle
-        title="Inventory"
+        title="Days of Inventory"
         description="Track stock levels, forecasting, vendor distribution, and inventory health."
       />
 
@@ -779,7 +1145,158 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Table */}
+      {activePoVendor ? (
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePoVendor(null);
+                  setSavedPoNumber("");
+                  setEmailPreviewOpen(false);
+                }}
+                className="mb-2 inline-flex h-9 items-center gap-2 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <ArrowLeft size={14} />
+                Back to Days of Inventory
+              </button>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {activePoVendor}
+              </h2>
+              <p className="text-xs text-slate-500">
+                Approved items only. Rows with 0 approved quantity are ignored.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void savePurchaseOrder()}
+                disabled={poRows.length === 0}
+                className="flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Save size={14} />
+                Create PO
+              </button>
+              <button
+                type="button"
+                onClick={() => generatePurchaseOrderPdf("preview")}
+                disabled={poRows.length === 0}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileText size={14} />
+                Preview PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => generatePurchaseOrderPdf("download")}
+                disabled={poRows.length === 0}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Download size={14} />
+                Download PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => setEmailPreviewOpen(true)}
+                disabled={poRows.length === 0}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send size={14} />
+                Send
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 text-xs">
+            <div className="rounded-lg border border-slate-200 p-3">
+              <p className="text-slate-500">PO Number</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {savedPoNumber || "Not saved"}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 p-3">
+              <p className="text-slate-500">Total Approved Qty</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {poApprovedTotal}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 p-3">
+              <p className="text-slate-500">Order to</p>
+              <button
+                type="button"
+                onClick={openOrderDestination}
+                className="mt-1 inline-flex h-8 max-w-full items-center gap-2 rounded-lg border border-slate-300 px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {activeVendorDetails?.order_at.toLowerCase().includes("website") ? (
+                  <Globe size={14} />
+                ) : (
+                  <Mail size={14} />
+                )}
+                <span className="truncate">
+                  {activeVendorDetails?.order_at || "No details"}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed text-xs">
+              <thead className="bg-slate-100 text-slate-700">
+                <tr>
+                  <th className="w-[240px] px-2.5 py-2 text-left font-semibold">
+                    Product
+                  </th>
+                  <th className="w-[120px] px-2.5 py-2 text-left font-semibold">
+                    Variant
+                  </th>
+                  <th className="w-[120px] px-2.5 py-2 text-left font-semibold">
+                    SKU
+                  </th>
+                  <th className="w-[90px] px-2.5 py-2 text-right font-semibold">
+                    Approved
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {poRows.map((row) => (
+                  <tr key={row.sku} className="border-t border-slate-100">
+                    <td className="px-2.5 py-2.5">
+                      <div className="truncate" title={row.productTitle}>
+                        {row.productTitle}
+                      </div>
+                    </td>
+                    <td className="px-2.5 py-2.5">
+                      <div className="truncate" title={row.variantTitle}>
+                        {row.variantTitle}
+                      </div>
+                    </td>
+                    <td className="px-2.5 py-2.5 font-medium text-slate-700">
+                      <div className="truncate" title={row.sku}>
+                        {row.sku}
+                      </div>
+                    </td>
+                    <td className="px-2.5 py-2.5 text-right font-semibold tabular-nums">
+                      {getApprovedQty(row)}
+                    </td>
+                  </tr>
+                ))}
+                {poRows.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-5 py-8 text-center text-sm text-slate-500"
+                    >
+                      No approved quantities for this vendor.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-xs">
@@ -851,10 +1368,10 @@ export default function InventoryPage() {
                       onMouseLeave={() => setHoveredApprovedSku(null)}
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <div className="flex items-center">
-                        <div className={`flex overflow-hidden rounded-lg border bg-white ${isActive ? "border-slate-900" : "border-slate-300"}`}>
+                      <div className="flex items-center justify-center">
+                        <div className={`flex min-w-[116px] overflow-hidden rounded-lg border bg-white ${isActive ? "border-slate-900" : "border-slate-300"}`}>
                           {showApprovedControls && (
-                            <button type="button" onClick={() => bumpQty(row, -1, approvedQty)} className="flex h-7 w-7 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
+                            <button type="button" onClick={() => bumpQty(row, -1, approvedQty)} className="flex h-7 w-7 shrink-0 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
                               <Minus size={12} />
                             </button>
                           )}
@@ -870,20 +1387,14 @@ export default function InventoryPage() {
                                 event.currentTarget.blur();
                               }
                             }}
-                            className="h-7 w-14 border-0 bg-white px-1 text-center text-xs font-semibold outline-none"
+                            className="h-7 min-w-0 flex-1 border-0 bg-white px-1 text-center text-xs font-semibold outline-none"
                           />
                           {showApprovedControls && (
-                            <button type="button" onClick={() => bumpQty(row, 1, approvedQty)} className="flex h-7 w-7 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
+                            <button type="button" onClick={() => bumpQty(row, 1, approvedQty)} className="flex h-7 w-7 shrink-0 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
                               <Plus size={12} />
                             </button>
                           )}
                         </div>
-                        {approvedSaveBySku[row.sku] === "saving" && (
-                          <span className="ml-1 text-[10px] text-slate-400">Saving</span>
-                        )}
-                        {approvedSaveBySku[row.sku] === "saved" && (
-                          <span className="ml-1 text-[10px] text-green-600">Saved</span>
-                        )}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.daysOfInventory}</td>
@@ -894,11 +1405,16 @@ export default function InventoryPage() {
                       </>
                     )}
                     <td className="whitespace-nowrap px-2.5 py-2.5">
-                      <span className={`inline-flex w-full justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        row.status === "Healthy" ? "bg-green-100 text-green-700" :
-                        row.status === "Low Stocks" ? "bg-yellow-100 text-yellow-700" :
-                        "bg-red-100 text-red-700"
-                      }`}>{row.status}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivePoVendor(row.vendor);
+                          setEmailPreviewOpen(false);
+                        }}
+                        className="inline-flex h-7 w-full items-center justify-center rounded-lg border border-slate-300 px-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                      >
+                        Update
+                      </button>
                     </td>
                   </tr>
                 );
@@ -912,6 +1428,80 @@ export default function InventoryPage() {
           </table>
         </div>
       </div>
+      )}
+
+      {emailPreviewOpen && activePoVendor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">
+                  Email Preview
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Confirm the final email format before sending.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmailPreviewOpen(false)}
+                className="rounded-lg p-2 hover:bg-slate-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-3 p-5 text-sm">
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-500">
+                  To
+                </p>
+                <p className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  {emailPreview.to}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-500">
+                  Subject
+                </p>
+                <p className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  {emailPreview.subject}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-500">
+                  Body
+                </p>
+                <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-sans text-sm text-slate-700">
+                  {emailPreview.body}
+                </pre>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setEmailPreviewOpen(false)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void savePurchaseOrder();
+                  setInventoryMessage({
+                    type: "success",
+                    text: "Email sending is ready to connect once the final vendor email format is confirmed.",
+                  });
+                  setEmailPreviewOpen(false);
+                }}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+              >
+                Confirm Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

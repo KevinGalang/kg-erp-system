@@ -1,139 +1,75 @@
-import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-export const runtime = "nodejs";
-
-type EnvMap = Record<string, string | undefined>;
-
-type VendorPayload = {
-  mfg?: string;
-  lead_time?: string;
-  review_period?: string;
-  order_at?: string;
-  link?: string;
-  username?: string;
-  password?: string;
-  contact?: string;
-  email?: string;
-  phone?: string;
-};
-
-const selectColumns =
-  "id, mfg, lead_time, review_period, order_at, link, username, password, contact, email, phone";
-
-async function getEnvMap(): Promise<EnvMap> {
-  try {
-    const context = await getCloudflareContext({ async: true });
-    return {
-      ...process.env,
-      ...(context.env as EnvMap),
-    };
-  } catch {
-    return process.env;
-  }
-}
-
-function getSupabaseAdmin(env: EnvMap) {
-  const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  }
-
-  if (!serviceRoleKey) {
-    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
-  }
-
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-}
-
-function requireText(payload: VendorPayload, key: keyof VendorPayload) {
-  const value = payload[key]?.trim();
-
-  if (!value) {
-    throw new Error(`Missing ${key}`);
-  }
-
-  return value;
-}
+const VENDOR_COLUMNS = `
+  id,
+  mfg,
+  code,
+  lead_time,
+  review_period,
+  order_at,
+  link,
+  username,
+  password,
+  contact,
+  email,
+  phone,
+  settings
+`;
 
 export async function GET() {
-  try {
-    const env = await getEnvMap();
-    const supabaseAdmin = getSupabaseAdmin(env);
-    const { data, error } = await supabaseAdmin
-      .from("vendor_list")
-      .select(selectColumns)
-      .order("mfg", { ascending: true });
+  const { data, error } = await supabaseAdmin
+    .from("vendor_list")
+    .select(VENDOR_COLUMNS)
+    .order("mfg", { ascending: true });
 
-    if (error) {
-      throw new Error(`Supabase vendor fetch failed: ${error.message}`);
-    }
-
-    return NextResponse.json({
-      vendors: data ?? [],
-    });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown vendor list fetch error";
-
+  if (error) {
     return NextResponse.json(
-      {
-        error: message,
-        vendors: [],
-      },
+      { error: `Supabase vendor fetch failed: ${error.message}` },
       { status: 500 }
     );
   }
+
+  return NextResponse.json({ vendors: data ?? [] });
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const payload = (await request.json()) as VendorPayload;
-    const row = {
-      mfg: requireText(payload, "mfg"),
-      lead_time: requireText(payload, "lead_time"),
-      review_period: requireText(payload, "review_period"),
-      order_at: requireText(payload, "order_at"),
-      link: requireText(payload, "link"),
-      username: requireText(payload, "username"),
-      password: requireText(payload, "password"),
-      contact: requireText(payload, "contact"),
-      email: requireText(payload, "email"),
-      phone: requireText(payload, "phone"),
+    const body = await request.json();
+
+    const payload = {
+      mfg: body.mfg ?? "",
+      code: body.code ?? "",
+      lead_time: body.lead_time ?? "",
+      review_period: body.review_period ?? "",
+      order_at: body.order_at ?? "",
+      link: body.link ?? "",
+      username: body.username ?? "",
+      password: body.password ?? "",
+      contact: body.contact ?? "",
+      email: body.email ?? "",
+      phone: body.phone ?? "",
+      settings: body.settings ?? null,
     };
 
-    const env = await getEnvMap();
-    const supabaseAdmin = getSupabaseAdmin(env);
     const { data, error } = await supabaseAdmin
       .from("vendor_list")
-      .insert(row)
-      .select(selectColumns)
+      .insert(payload)
+      .select(VENDOR_COLUMNS)
       .single();
 
     if (error) {
-      throw new Error(`Supabase vendor insert failed: ${error.message}`);
+      return NextResponse.json(
+        { error: `Supabase vendor insert failed: ${error.message}` },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({
-      vendor: data,
-    });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown vendor list insert error";
-
+    return NextResponse.json({ vendor: data });
+  } catch {
     return NextResponse.json(
-      {
-        error: message,
-      },
-      { status: 400 }
+      { error: "Unable to add vendor." },
+      { status: 500 }
     );
   }
 }

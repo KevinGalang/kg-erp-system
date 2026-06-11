@@ -12,6 +12,7 @@ create table if not exists public.vendor_list (
   contact text not null,
   email text not null,
   phone text not null,
+  settings jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

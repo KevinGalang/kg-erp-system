@@ -1,9 +1,21 @@
-﻿node_modules
+﻿# Dependencies
+node_modules
+
+# Next.js
 .next
+
+# Netlify
 .netlify
+
+# Cloudflare
 .wrangler
+
+# Environment variables
 .env
 .env.local
+
+# Logs
 dev-server.log
+
+# TypeScript build cache
 tsconfig.tsbuildinfo
-.shiphero-session/

@@ -38,8 +38,22 @@ type MenuItem = {
 
 const menuItems: MenuItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Inventory", href: "/inventory", icon: Boxes },
-  { label: "Purchase Order", href: "/purchase-order", icon: ClipboardList },
+  {
+    label: "Inventory",
+    icon: Boxes,
+    children: [
+      {
+        label: "Days of Inventory",
+        href: "/inventory",
+        icon: CalendarDays,
+      },
+      {
+        label: "Purchase Order",
+        href: "/purchase-orders",
+        icon: ClipboardList,
+      },
+    ],
+  },
   {
     label: "Reports",
     icon: BarChart3,
@@ -97,6 +111,9 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({
+    Inventory:
+      pathname.startsWith("/inventory") ||
+      pathname.startsWith("/purchase-orders"),
     Reports: pathname.startsWith("/reports"),
     Files: pathname.startsWith("/files"),
     Masters: pathname.startsWith("/masters"),
