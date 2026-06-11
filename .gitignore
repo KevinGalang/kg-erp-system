@@ -19,3 +19,5 @@ dev-server.log
 
 # TypeScript build cache
 tsconfig.tsbuildinfo
+
+.shiphero-session/
