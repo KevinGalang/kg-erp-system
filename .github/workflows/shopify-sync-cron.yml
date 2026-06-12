@@ -3,14 +3,14 @@ name: Shopify Scheduled Sync
 on:
   workflow_dispatch:
   schedule:
-    # GitHub cron is UTC. These cover Friday 7:00-7:45 AM Eastern
-    # during both daylight and standard time. The app schedule decides
-    # whether the Shopify sync is actually due.
-    - cron: "0,15,30,45 11,12 * * 5"
+    # Every 4 hours
+    - cron: "0 */4 * * *"
 
 jobs:
   shopify-sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
       - name: Call scheduled sync endpoint
         env:

@@ -21,3 +21,4 @@ dev-server.log
 tsconfig.tsbuildinfo
 
 .shiphero-session/
+.vercel
