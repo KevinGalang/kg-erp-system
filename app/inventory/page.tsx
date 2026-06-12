@@ -60,6 +60,23 @@ type ColumnFilterKey =
   | "status";
 type SyncFrequency = "daily" | "weekly" | "custom";
 
+const SYNC_TIME_OPTIONS = [
+  { label: "12:00 AM", value: "00:00" },
+  { label: "4:00 AM", value: "04:00" },
+  { label: "8:00 AM", value: "08:00" },
+  { label: "12:00 PM", value: "12:00" },
+  { label: "4:00 PM", value: "16:00" },
+  { label: "8:00 PM", value: "20:00" },
+];
+
+const DEFAULT_SYNC_TIME = "08:00";
+
+function normalizeSyncTime(value?: string) {
+  return SYNC_TIME_OPTIONS.some((option) => option.value === value)
+    ? value
+    : DEFAULT_SYNC_TIME;
+}
+
 type ShopifyInventoryResponse = {
   snapshotDate: string | null;
   dates?: string[];
@@ -207,7 +224,7 @@ function normalizeText(value: string) {
 
 function getSavedSyncSchedule() {
   const defaultSchedule = {
-    time: "08:00",
+    time: DEFAULT_SYNC_TIME,
     frequency: "weekly" as SyncFrequency,
     days: ["M"],
   };
@@ -230,7 +247,7 @@ function getSavedSyncSchedule() {
     };
 
     return {
-      time: parsed.time || defaultSchedule.time,
+      time: normalizeSyncTime(parsed.time),
       frequency: parsed.frequency || defaultSchedule.frequency,
       days: parsed.days?.length ? parsed.days : defaultSchedule.days,
     };
@@ -407,13 +424,15 @@ export default function InventoryPage() {
       })
       .then((schedule) => {
         if (!ignore && schedule) {
-          setScheduleTime(schedule.time);
+          const normalizedTime = normalizeSyncTime(schedule.time);
+
+          setScheduleTime(normalizedTime);
           setScheduleFrequency(schedule.frequency);
           setScheduleDays(schedule.days);
           window.localStorage.setItem(
             "shopify-sync-schedule",
             JSON.stringify({
-              time: schedule.time,
+              time: normalizedTime,
               frequency: schedule.frequency,
               days: schedule.days,
             })
@@ -806,10 +825,12 @@ export default function InventoryPage() {
   const saveSyncSchedule = async () => {
     const days = scheduleFrequency === "daily" ? ["S", "M", "T", "W", "T2", "F", "S2"] : scheduleDays;
 
+    const normalizedTime = normalizeSyncTime(scheduleTime);
+
     window.localStorage.setItem(
       "shopify-sync-schedule",
       JSON.stringify({
-        time: scheduleTime,
+        time: normalizedTime,
         frequency: scheduleFrequency,
         days,
       })
@@ -825,7 +846,7 @@ export default function InventoryPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          time: scheduleTime,
+          time: normalizedTime,
           frequency: scheduleFrequency,
           days,
           enabled: true,
@@ -1154,12 +1175,17 @@ export default function InventoryPage() {
                 <div className="space-y-4 rounded-xl border border-slate-200 p-4">
                   <div>
                     <label className="text-sm font-medium text-slate-700">Time</label>
-                    <input
-                      type="time"
+                    <select
                       value={scheduleTime}
                       onChange={(event) => setScheduleTime(event.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900"
-                    />
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-900"
+                    >
+                      {SYNC_TIME_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
