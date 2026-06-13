@@ -110,6 +110,9 @@ type VendorSettings = {
   emailSubject?: string;
   emailBody?: string;
   pdfEmailBody?: string;
+  pdfEnabled?: boolean;
+  pdfSampleName?: string;
+  pdfEditableFields?: string[];
   tableColumns?: VendorTableColumn[];
 };
 
@@ -133,7 +136,7 @@ type SyncScheduleResponse = {
 
 type ApprovedSaveState = "idle" | "saving" | "saved" | "error";
 
-const DEFAULT_EMAIL_FROM = "Kevin Galang <kevingalang@vidalcoaching.com>";
+const DEFAULT_EMAIL_FROM = "Kevin Galang <kevin@vidalcoaching.com>";
 const DEFAULT_EMAIL_COLUMNS: VendorTableColumn[] = [
   { header: "Product Title", field: "Product Title" },
   { header: "Variant", field: "Variant" },
@@ -161,6 +164,10 @@ function poDateCode(dateValue: string | Date | undefined) {
 
 function normalizeFieldName(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getFirstName(value: string | undefined | null) {
+  return String(value || "").trim().split(/\s+/)[0] || "";
 }
 
 function roundUpToUom(value: number, uom: number) {
@@ -915,7 +922,10 @@ export default function InventoryPage() {
       </table>
     `;
     const replacements: Record<string, string> = {
-      contact: activeVendorDetails?.contact || activeVendorDetails?.mfg || vendorName,
+      contact:
+        getFirstName(
+          activeVendorDetails?.contact || activeVendorDetails?.mfg || vendorName
+        ) || vendorName,
       table: tableText,
       poNumber,
       vendor: vendorName,

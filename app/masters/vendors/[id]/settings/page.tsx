@@ -33,6 +33,9 @@ type VendorSettings = {
   emailSubject: string;
   emailBody: string;
   pdfEmailBody: string;
+  pdfEnabled: boolean;
+  pdfSampleName: string;
+  pdfEditableFields: string[];
   tableColumns: TableColumn[];
 };
 
@@ -97,6 +100,9 @@ Thanks`,
 Kindly see attached for our order this week.
 
 Thanks`,
+    pdfEnabled: false,
+    pdfSampleName: "",
+    pdfEditableFields: defaultColumns.map((column) => column.field),
     tableColumns: defaultColumns,
   };
 }
@@ -106,15 +112,23 @@ function normalizeSettings(
   settings?: VendorSettings | null
 ): VendorSettings {
   const defaults = getDefaultSettings(vendor);
+  const tableColumns =
+    Array.isArray(settings?.tableColumns) && settings.tableColumns.length > 0
+      ? settings.tableColumns
+      : defaults.tableColumns;
 
   return {
     emailSubject: settings?.emailSubject || defaults.emailSubject,
     emailBody: settings?.emailBody || defaults.emailBody,
     pdfEmailBody: settings?.pdfEmailBody || defaults.pdfEmailBody,
-    tableColumns:
-      Array.isArray(settings?.tableColumns) && settings.tableColumns.length > 0
-        ? settings.tableColumns
-        : defaults.tableColumns,
+    pdfEnabled: Boolean(settings?.pdfEnabled),
+    pdfSampleName: settings?.pdfSampleName || defaults.pdfSampleName,
+    pdfEditableFields:
+      Array.isArray(settings?.pdfEditableFields) &&
+      settings.pdfEditableFields.length > 0
+        ? settings.pdfEditableFields
+        : tableColumns.map((column) => column.field),
+    tableColumns,
   };
 }
 
@@ -156,6 +170,9 @@ export default function VendorSettingsPage() {
   const [vendor, setVendor] = useState<VendorRow | null>(null);
   const [vendorForm, setVendorForm] = useState<VendorForm | null>(null);
   const [settings, setSettings] = useState<VendorSettings | null>(null);
+  const [configurationTab, setConfigurationTab] = useState<"email" | "pdf">(
+    "email"
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{
@@ -240,6 +257,22 @@ export default function VendorSettingsPage() {
     [allVendors]
   );
 
+  const pdfFieldOptions = useMemo(() => {
+    const columns =
+      settings?.tableColumns && settings.tableColumns.length > 0
+        ? settings.tableColumns
+        : defaultColumns;
+    const uniqueColumns = new Map<string, TableColumn>();
+
+    columns.forEach((column) => {
+      if (column.field && !uniqueColumns.has(column.field)) {
+        uniqueColumns.set(column.field, column);
+      }
+    });
+
+    return Array.from(uniqueColumns.values());
+  }, [settings]);
+
   const updateVendorForm = (key: keyof VendorForm, value: string) => {
     setVendorForm((current) =>
       current ? { ...current, [key]: value } : current
@@ -288,6 +321,18 @@ export default function VendorSettingsPage() {
           }
         : current
     );
+  };
+
+  const togglePdfEditableField = (field: string) => {
+    setSettings((current) => {
+      if (!current) return current;
+
+      const fields = current.pdfEditableFields.includes(field)
+        ? current.pdfEditableFields.filter((item) => item !== field)
+        : [...current.pdfEditableFields, field];
+
+      return { ...current, pdfEditableFields: fields };
+    });
   };
 
   const saveSettings = async () => {
@@ -474,54 +519,152 @@ export default function VendorSettingsPage() {
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-semibold text-slate-900">
-          Email Configuration
-        </h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Vendor Order Configuration
+          </h2>
 
-        <div className="space-y-4">
-          <input
-            type="text"
-            value={settings.emailSubject}
-            onChange={(event) =>
-              setSettings((current) =>
-                current
-                  ? { ...current, emailSubject: event.target.value }
-                  : current
-              )
-            }
-            className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-900"
-          />
-
-          <textarea
-            value={settings.emailBody}
-            onChange={(event) =>
-              setSettings((current) =>
-                current ? { ...current, emailBody: event.target.value } : current
-              )
-            }
-            rows={8}
-            className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-slate-900"
-          />
-
-          <textarea
-            value={settings.pdfEmailBody}
-            onChange={(event) =>
-              setSettings((current) =>
-                current
-                  ? { ...current, pdfEmailBody: event.target.value }
-                  : current
-              )
-            }
-            rows={5}
-            className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-slate-900"
-          />
+          <div className="inline-flex rounded-lg border border-slate-300 bg-slate-50 p-1">
+            <button
+              type="button"
+              onClick={() => setConfigurationTab("email")}
+              className={`h-8 rounded-md px-3 text-xs font-semibold ${
+                configurationTab === "email"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-700 hover:bg-white"
+              }`}
+            >
+              Email Configuration
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfigurationTab("pdf")}
+              className={`h-8 rounded-md px-3 text-xs font-semibold ${
+                configurationTab === "pdf"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-700 hover:bg-white"
+              }`}
+            >
+              PDF Configuration
+            </button>
+          </div>
         </div>
+
+        {configurationTab === "email" ? (
+          <div className="space-y-4">
+            <input
+              type="text"
+              value={settings.emailSubject}
+              onChange={(event) =>
+                setSettings((current) =>
+                  current
+                    ? { ...current, emailSubject: event.target.value }
+                    : current
+                )
+              }
+              className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-900"
+            />
+
+            <textarea
+              value={settings.emailBody}
+              onChange={(event) =>
+                setSettings((current) =>
+                  current
+                    ? { ...current, emailBody: event.target.value }
+                    : current
+                )
+              }
+              rows={8}
+              className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-slate-900"
+            />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <input
+                type="checkbox"
+                checked={settings.pdfEnabled}
+                onChange={(event) =>
+                  setSettings((current) =>
+                    current
+                      ? { ...current, pdfEnabled: event.target.checked }
+                      : current
+                  )
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              Use PDF configuration for this vendor
+            </label>
+
+            <textarea
+              value={settings.pdfEmailBody}
+              disabled={!settings.pdfEnabled}
+              onChange={(event) =>
+                setSettings((current) =>
+                  current
+                    ? { ...current, pdfEmailBody: event.target.value }
+                    : current
+                )
+              }
+              rows={5}
+              className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
+            />
+
+            <div className="rounded-lg border border-dashed border-slate-300 p-4">
+              <label className="block text-xs font-semibold uppercase text-slate-500">
+                Sample PDF
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
+                disabled={!settings.pdfEnabled}
+                onChange={(event) => {
+                  const fileName = event.target.files?.[0]?.name || "";
+                  setSettings((current) =>
+                    current ? { ...current, pdfSampleName: fileName } : current
+                  );
+                }}
+                className="mt-2 block w-full text-sm text-slate-700 file:mr-3 file:h-9 file:rounded-lg file:border file:border-slate-300 file:bg-white file:px-3 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-100 disabled:text-slate-400"
+              />
+              {settings.pdfSampleName && (
+                <p className="mt-2 text-xs font-medium text-slate-600">
+                  Sample selected: {settings.pdfSampleName}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase text-slate-500">
+                Editable PDF Details
+              </p>
+              <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+                {pdfFieldOptions.map((column) => (
+                  <label
+                    key={column.field}
+                    className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800"
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={!settings.pdfEnabled}
+                      checked={settings.pdfEditableFields.includes(
+                        column.field
+                      )}
+                      onChange={() => togglePdfEditableField(column.field)}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                    />
+                    {column.header || column.field}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">
-            Table Configuration
+            Email Table Configuration
           </h2>
 
           <button
