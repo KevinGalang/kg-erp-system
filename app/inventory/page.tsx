@@ -106,6 +106,12 @@ type VendorTableColumn = {
   field: string;
 };
 
+type PdfSkuMapping = {
+  sku: string;
+  itemSku: string;
+  itemName: string;
+};
+
 type VendorSettings = {
   emailSubject?: string;
   emailBody?: string;
@@ -113,6 +119,7 @@ type VendorSettings = {
   pdfEnabled?: boolean;
   pdfSampleName?: string;
   pdfEditableFields?: string[];
+  pdfSkuMappings?: PdfSkuMapping[];
   tableColumns?: VendorTableColumn[];
 };
 
@@ -771,10 +778,21 @@ export default function InventoryPage() {
 
     const poNumber = ensurePoNumber();
     const doc = new jsPDF();
+    const settings = activeVendorDetails?.settings;
+    const pdfMappings =
+      settings?.pdfEnabled && Array.isArray(settings.pdfSkuMappings)
+        ? settings.pdfSkuMappings
+        : [];
+    const mappingBySku = new Map(
+      pdfMappings
+        .filter((mapping) => mapping.sku)
+        .map((mapping) => [normalizeText(mapping.sku), mapping])
+    );
+    const usesVendorPdfConfiguration = settings?.pdfEnabled && pdfMappings.length > 0;
     let y = 18;
 
     doc.setFontSize(16);
-    doc.text("Purchase Order", 14, y);
+    doc.text(usesVendorPdfConfiguration ? `${activePoVendor} Order` : "Purchase Order", 14, y);
     y += 9;
     doc.setFontSize(10);
     doc.text(`PO Number: ${poNumber}`, 14, y);
@@ -785,27 +803,43 @@ export default function InventoryPage() {
     y += 9;
 
     doc.setFontSize(9);
-    doc.text("SKU", 14, y);
-    doc.text("Item", 48, y);
-    doc.text("Approved", 178, y, { align: "right" });
+    if (usesVendorPdfConfiguration) {
+      doc.text("Item SKU # / Private label SKU #", 14, y);
+      doc.text("Item Name (Flavor):", 78, y);
+      doc.text("Item Quantity:", 178, y, { align: "right" });
+    } else {
+      doc.text("SKU", 14, y);
+      doc.text("Item", 48, y);
+      doc.text("Approved", 178, y, { align: "right" });
+    }
     y += 4;
     doc.line(14, y, 195, y);
     y += 6;
 
     poRows.forEach((row) => {
+      const mappedItem = mappingBySku.get(normalizeText(row.sku));
       const itemName =
-        row.variantTitle && row.variantTitle !== "Default Title"
+        usesVendorPdfConfiguration && mappedItem?.itemName
+          ? mappedItem.itemName
+          : row.variantTitle && row.variantTitle !== "Default Title"
           ? `${row.productTitle} - ${row.variantTitle}`
           : row.productTitle;
-      const itemLines = doc.splitTextToSize(itemName, 110);
+      const itemSku =
+        usesVendorPdfConfiguration && mappedItem?.itemSku
+          ? mappedItem.itemSku
+          : row.sku || "-";
+      const itemLines = doc.splitTextToSize(
+        itemName,
+        usesVendorPdfConfiguration ? 88 : 110
+      );
 
       if (y > 270) {
         doc.addPage();
         y = 18;
       }
 
-      doc.text(row.sku || "-", 14, y);
-      doc.text(itemLines, 48, y);
+      doc.text(itemSku, 14, y);
+      doc.text(itemLines, usesVendorPdfConfiguration ? 78 : 48, y);
       doc.text(String(getApprovedQty(row)), 178, y, { align: "right" });
       y += Math.max(6, itemLines.length * 5);
     });

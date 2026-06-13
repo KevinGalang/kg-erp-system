@@ -29,6 +29,12 @@ type TableColumn = {
   field: string;
 };
 
+type PdfSkuMapping = {
+  sku: string;
+  itemSku: string;
+  itemName: string;
+};
+
 type VendorSettings = {
   emailSubject: string;
   emailBody: string;
@@ -36,6 +42,7 @@ type VendorSettings = {
   pdfEnabled: boolean;
   pdfSampleName: string;
   pdfEditableFields: string[];
+  pdfSkuMappings: PdfSkuMapping[];
   tableColumns: TableColumn[];
 };
 
@@ -75,6 +82,37 @@ const defaultColumns: TableColumn[] = [
   { header: "Approved", field: "Approved" },
 ];
 
+const defaultPdfFields = [
+  "Item SKU # / Private label SKU #",
+  "Item Name (Flavor):",
+  "Item Quantity:",
+];
+
+const nutridynPdfSkuMappings: PdfSkuMapping[] = [
+  { sku: "Bind-Clear", itemSku: "PL-VL178", itemName: "Bind & Clear" },
+  { sku: "1A002", itemSku: "PL-VL913", itemName: "Essential Zn" },
+  { sku: "FatDigestVL", itemSku: "PL-VL863", itemName: "Fat Digest" },
+  { sku: "GSE", itemSku: "PL-VL2176", itemName: "GSE Eradicate" },
+  { sku: "1D002", itemSku: "PL-VL710", itemName: "Gut Lining Pro" },
+  { sku: "1D003", itemSku: "PL-VL325", itemName: "Gut Tissue Repair" },
+  { sku: "1D001", itemSku: "PL-VL915", itemName: "Hormone Plus Complete" },
+  { sku: "1C005", itemSku: "PL-VL2178", itemName: "Mucosa Repair" },
+  { sku: "Optimal-Andro", itemSku: "PL-VL918", itemName: "Optimal Androgens" },
+  { sku: "1B005", itemSku: "PL-VL895", itemName: "Optimal Kidney Pro" },
+  { sku: "1A001", itemSku: "PL-VL2196", itemName: "Pro Spore Plus" },
+  { sku: "1B002", itemSku: "PL-VL848L", itemName: "Resolve 120 ct" },
+  { sku: "1B001", itemSku: "PL-VL848", itemName: "Resolve 60ct" },
+  { sku: "1C002", itemSku: "PL-VL2121", itemName: "Sinus Pro" },
+  { sku: "1C004", itemSku: "PL-VL2193", itemName: "Stomach Relief" },
+  { sku: "1A004", itemSku: "PL-VL154", itemName: "Tummy Rescue" },
+  { sku: "Vida-C", itemSku: "PL-VL101", itemName: "VidaC 1000" },
+];
+
+function isNutridynVendor(vendor?: VendorRow | null) {
+  const vendorText = `${vendor?.mfg || ""} ${vendor?.code || ""}`.toLowerCase();
+  return vendorText.includes("nutridyn") || vendorText.includes("nutri-dyn");
+}
+
 function getTodayCodeDate() {
   return new Date()
     .toLocaleDateString("en-US", {
@@ -102,7 +140,8 @@ Kindly see attached for our order this week.
 Thanks`,
     pdfEnabled: false,
     pdfSampleName: "",
-    pdfEditableFields: defaultColumns.map((column) => column.field),
+    pdfEditableFields: defaultPdfFields,
+    pdfSkuMappings: isNutridynVendor(vendor) ? nutridynPdfSkuMappings : [],
     tableColumns: defaultColumns,
   };
 }
@@ -127,7 +166,12 @@ function normalizeSettings(
       Array.isArray(settings?.pdfEditableFields) &&
       settings.pdfEditableFields.length > 0
         ? settings.pdfEditableFields
-        : tableColumns.map((column) => column.field),
+        : defaults.pdfEditableFields,
+    pdfSkuMappings:
+      Array.isArray(settings?.pdfSkuMappings) &&
+      settings.pdfSkuMappings.length > 0
+        ? settings.pdfSkuMappings
+        : defaults.pdfSkuMappings,
     tableColumns,
   };
 }
@@ -173,6 +217,8 @@ export default function VendorSettingsPage() {
   const [configurationTab, setConfigurationTab] = useState<"email" | "pdf">(
     "email"
   );
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
+  const [pdfPreviewType, setPdfPreviewType] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{
@@ -257,21 +303,13 @@ export default function VendorSettingsPage() {
     [allVendors]
   );
 
-  const pdfFieldOptions = useMemo(() => {
-    const columns =
-      settings?.tableColumns && settings.tableColumns.length > 0
-        ? settings.tableColumns
-        : defaultColumns;
-    const uniqueColumns = new Map<string, TableColumn>();
+  const pdfFieldOptions = defaultPdfFields;
 
-    columns.forEach((column) => {
-      if (column.field && !uniqueColumns.has(column.field)) {
-        uniqueColumns.set(column.field, column);
-      }
-    });
-
-    return Array.from(uniqueColumns.values());
-  }, [settings]);
+  useEffect(() => {
+    return () => {
+      if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+    };
+  }, [pdfPreviewUrl]);
 
   const updateVendorForm = (key: keyof VendorForm, value: string) => {
     setVendorForm((current) =>
@@ -333,6 +371,50 @@ export default function VendorSettingsPage() {
 
       return { ...current, pdfEditableFields: fields };
     });
+  };
+
+  const addPdfSkuMapping = () => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            pdfSkuMappings: [
+              ...current.pdfSkuMappings,
+              { sku: "", itemSku: "", itemName: "" },
+            ],
+          }
+        : current
+    );
+  };
+
+  const updatePdfSkuMapping = (
+    index: number,
+    key: keyof PdfSkuMapping,
+    value: string
+  ) => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            pdfSkuMappings: current.pdfSkuMappings.map((mapping, mappingIndex) =>
+              mappingIndex === index ? { ...mapping, [key]: value } : mapping
+            ),
+          }
+        : current
+    );
+  };
+
+  const removePdfSkuMapping = (index: number) => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            pdfSkuMappings: current.pdfSkuMappings.filter(
+              (_mapping, mappingIndex) => mappingIndex !== index
+            ),
+          }
+        : current
+    );
   };
 
   const saveSettings = async () => {
@@ -616,10 +698,15 @@ export default function VendorSettingsPage() {
               </label>
               <input
                 type="file"
-                accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
+                accept=".pdf,.png,.jpg,.jpeg"
                 disabled={!settings.pdfEnabled}
                 onChange={(event) => {
-                  const fileName = event.target.files?.[0]?.name || "";
+                  const file = event.target.files?.[0];
+                  const fileName = file?.name || "";
+
+                  if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+                  setPdfPreviewUrl(file ? URL.createObjectURL(file) : "");
+                  setPdfPreviewType(file?.type || "");
                   setSettings((current) =>
                     current ? { ...current, pdfSampleName: fileName } : current
                   );
@@ -631,6 +718,24 @@ export default function VendorSettingsPage() {
                   Sample selected: {settings.pdfSampleName}
                 </p>
               )}
+              {pdfPreviewUrl && (
+                <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  {pdfPreviewType === "application/pdf" ? (
+                    <iframe
+                      title="Uploaded PDF preview"
+                      src={pdfPreviewUrl}
+                      className="h-[540px] w-full"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={pdfPreviewUrl}
+                      alt="Uploaded PDF sample preview"
+                      className="mx-auto max-h-[540px] max-w-full object-contain"
+                    />
+                  )}
+                </div>
+              )}
             </div>
 
             <div>
@@ -638,29 +743,137 @@ export default function VendorSettingsPage() {
                 Editable PDF Details
               </p>
               <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-                {pdfFieldOptions.map((column) => (
+                {pdfFieldOptions.map((field) => {
+                  const selected = settings.pdfEditableFields.includes(field);
+
+                  return (
                   <label
-                    key={column.field}
-                    className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800"
+                    key={field}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+                      selected
+                        ? "border-yellow-300 bg-yellow-100 text-slate-950"
+                        : "border-slate-200 text-slate-800"
+                    }`}
                   >
                     <input
                       type="checkbox"
                       disabled={!settings.pdfEnabled}
-                      checked={settings.pdfEditableFields.includes(
-                        column.field
-                      )}
-                      onChange={() => togglePdfEditableField(column.field)}
+                      checked={selected}
+                      onChange={() => togglePdfEditableField(field)}
                       className="h-4 w-4 rounded border-slate-300 text-slate-900"
                     />
-                    {column.header || column.field}
+                    {field}
                   </label>
-                ))}
+                  );
+                })}
               </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    PDF SKU Database
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Used to fill Item SKU #, Item Name (Flavor), and approved
+                    quantity on vendor PDFs.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addPdfSkuMapping}
+                  disabled={!settings.pdfEnabled}
+                  className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus size={14} />
+                  Add Row
+                </button>
+              </div>
+
+              <table className="w-full text-xs">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="w-[26%] px-3 py-2 text-left font-semibold">
+                      SKU
+                    </th>
+                    <th className="w-[26%] px-3 py-2 text-left font-semibold">
+                      Item SKU #
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold">
+                      Item Name (Flavor):
+                    </th>
+                    <th className="w-20 px-3 py-2 text-center font-semibold">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {settings.pdfSkuMappings.map((mapping, index) => (
+                    <tr key={`${mapping.sku}-${index}`} className="border-t">
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={mapping.sku}
+                          disabled={!settings.pdfEnabled}
+                          onChange={(event) =>
+                            updatePdfSkuMapping(index, "sku", event.target.value)
+                          }
+                          className="h-9 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={mapping.itemSku}
+                          disabled={!settings.pdfEnabled}
+                          onChange={(event) =>
+                            updatePdfSkuMapping(
+                              index,
+                              "itemSku",
+                              event.target.value
+                            )
+                          }
+                          className="h-9 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={mapping.itemName}
+                          disabled={!settings.pdfEnabled}
+                          onChange={(event) =>
+                            updatePdfSkuMapping(
+                              index,
+                              "itemName",
+                              event.target.value
+                            )
+                          }
+                          className="h-9 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => removePdfSkuMapping(index)}
+                          disabled={!settings.pdfEnabled}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Delete PDF SKU mapping"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
       </div>
 
+      {configurationTab === "email" && (
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">
@@ -735,6 +948,7 @@ export default function VendorSettingsPage() {
           </tbody>
         </table>
       </div>
+      )}
     </section>
   );
 }
