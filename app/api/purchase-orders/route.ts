@@ -84,6 +84,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const poNumbers = Array.from(
+      new Set(payload.map((row) => row.po_number).filter(Boolean))
+    );
+
+    if (poNumbers.length) {
+      const { error: deleteError } = await supabaseAdmin
+        .from("purchase_orders")
+        .delete()
+        .in("po_number", poNumbers);
+
+      if (deleteError) {
+        return NextResponse.json(
+          {
+            error: `Supabase purchase order replace failed: ${deleteError.message}`,
+          },
+          { status: 500 }
+        );
+      }
+    }
+
     const { data, error } = await supabaseAdmin
       .from("purchase_orders")
       .insert(payload)

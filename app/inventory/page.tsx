@@ -277,6 +277,21 @@ function getFirstName(value: string | undefined | null) {
   return String(value || "").trim().split(/\s+/)[0] || "";
 }
 
+function isEmailAddress(value: string | undefined | null) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function getVendorEmailAddress(vendor: VendorRow | null) {
+  if (!vendor) return "";
+  const email = String(vendor.email || "").trim();
+  const link = String(vendor.link || "").trim();
+
+  if (isEmailAddress(email)) return email;
+  if (isEmailAddress(link)) return link;
+
+  return "";
+}
+
 function normalizeVendorMatchKey(value: string) {
   return normalizeText(value)
     .replace(/^vidal\s*-\s*/, "")
@@ -1090,7 +1105,7 @@ export default function InventoryPage() {
 
     return {
       from: DEFAULT_EMAIL_FROM,
-      to: activeVendorDetails?.email || activeVendorDetails?.link || "",
+      to: getVendorEmailAddress(activeVendorDetails),
       subject: replacePlaceholders(subjectTemplate, replacements),
       bodyText,
       bodyHtml,
@@ -1456,6 +1471,7 @@ export default function InventoryPage() {
       : []),
     { label: "Update", key: "status", width: "w-[105px]" },
   ];
+  const activeVendorUsesPdf = Boolean(activeVendorDetails?.settings?.pdfEnabled);
 
   return (
       <div className="space-y-4" onClick={() => {
@@ -1700,36 +1716,28 @@ export default function InventoryPage() {
                 <Save size={14} />
                 {savedPoNumber ? "Update PO" : "Create PO"}
               </button>
-              {savedPoNumber && (
+              {activeVendorUsesPdf && (
+                <>
                 <button
                   type="button"
-                  onClick={() => {
-                    window.location.href = `/purchase-orders?po=${encodeURIComponent(savedPoNumber)}`;
-                  }}
-                  className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={() => generatePurchaseOrderPdf("preview")}
+                  disabled={poRows.length === 0}
+                  className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <FileText size={14} />
-                  Open PO
+                  Preview PDF
                 </button>
+                <button
+                  type="button"
+                  onClick={() => generatePurchaseOrderPdf("download")}
+                  disabled={poRows.length === 0}
+                  className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download size={14} />
+                  Download PDF
+                </button>
+                </>
               )}
-              <button
-                type="button"
-                onClick={() => generatePurchaseOrderPdf("preview")}
-                disabled={poRows.length === 0}
-                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <FileText size={14} />
-                Preview PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => generatePurchaseOrderPdf("download")}
-                disabled={poRows.length === 0}
-                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Download size={14} />
-                Download PDF
-              </button>
               <button
                 type="button"
                 onClick={() => setEmailPreviewOpen(true)}

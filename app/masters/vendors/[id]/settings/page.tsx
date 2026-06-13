@@ -329,9 +329,12 @@ export default function VendorSettingsPage() {
         if (!ignore) {
           setVendor(vendorData.vendor);
           setVendorForm(vendorToForm(vendorData.vendor));
-          setSettings(
-            normalizeSettings(vendorData.vendor, vendorData.vendor.settings)
+          const normalizedSettings = normalizeSettings(
+            vendorData.vendor,
+            vendorData.vendor.settings
           );
+          setSettings(normalizedSettings);
+          setConfigurationTab(normalizedSettings.pdfEnabled ? "pdf" : "email");
           setAllVendors(vendorsData.vendors || []);
         }
       } catch (error) {

@@ -50,15 +50,16 @@ export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
     const rows = Array.isArray(body.rows) ? body.rows : [];
+    const poNumber = String(body.poNumber || rows[0]?.po_number || "").trim();
 
-    if (!rows.length) {
+    if (!poNumber) {
       return NextResponse.json(
-        { error: "No purchase order rows to update." },
+        { error: "Missing PO number." },
         { status: 400 }
       );
     }
 
-    const results = [];
+    const payload = [];
 
     for (const row of rows) {
       const qty = toNumber(row.qty);
@@ -80,7 +81,7 @@ export async function PATCH(request: NextRequest) {
         ? getStatus(qty, row.qty_received, row.status)
         : row.status || "Pending";
 
-      const payload = {
+      payload.push({
         date: row.date,
         mfg: row.mfg,
         product_title: row.product_title,
@@ -89,41 +90,47 @@ export async function PATCH(request: NextRequest) {
         qty,
         qty_received: qtyReceived,
         diff: getDiff(qty, row.qty_received),
-        po_number: row.po_number,
+        po_number: poNumber,
         status: finalStatus,
         updated_at: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabaseAdmin
-        .from("purchase_orders")
-        .update(payload)
-        .eq("po_number", row.po_number)
-        .eq("product_title", row.product_title)
-        .eq("variant_title", row.variant_title || "")
-        .select(PURCHASE_ORDER_COLUMNS)
-        .maybeSingle();
-
-      if (error) {
-        return NextResponse.json(
-          { error: `Error while saving: ${error.message}` },
-          { status: 500 }
-        );
-      }
-
-      if (!data) {
-        results.push({
-          status: "Row not found",
-          row,
-        });
-      } else {
-        results.push({
-          status: "Updated successfully",
-          row: data,
-        });
-      }
+      });
     }
 
-    return NextResponse.json({ results });
+    const { error: deleteError } = await supabaseAdmin
+      .from("purchase_orders")
+      .delete()
+      .eq("po_number", poNumber);
+
+    if (deleteError) {
+      return NextResponse.json(
+        { error: `Error while replacing PO: ${deleteError.message}` },
+        { status: 500 }
+      );
+    }
+
+    if (!payload.length) {
+      return NextResponse.json({ purchaseOrders: [], results: [] });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("purchase_orders")
+      .insert(payload)
+      .select(PURCHASE_ORDER_COLUMNS);
+
+    if (error) {
+      return NextResponse.json(
+        { error: `Error while saving: ${error.message}` },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      purchaseOrders: data ?? [],
+      results: (data ?? []).map((row) => ({
+        status: "Updated successfully",
+        row,
+      })),
+    });
   } catch (error) {
     return NextResponse.json(
       {

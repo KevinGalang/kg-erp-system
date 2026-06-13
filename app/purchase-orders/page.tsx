@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Edit3, Save, Search, X } from "lucide-react";
+import { Copy, Edit3, Plus, Save, Search, Trash2, X } from "lucide-react";
 import PageTitle from "@/components/PageTitle";
 
 type PurchaseOrderRow = {
-  id: string;
+  id?: string;
   date: string;
   mfg: string;
   product_title: string;
@@ -69,6 +69,7 @@ export default function PurchaseOrdersPage() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadPurchaseOrders();
   }, []);
 
@@ -184,6 +185,34 @@ export default function PurchaseOrdersPage() {
     setPoStatus("Received");
   };
 
+  const addPopupRow = () => {
+    const base = popupRows[0];
+    setPopupRows((current) => [
+      ...current,
+      {
+        id: `new-${Date.now()}`,
+        date: base?.date || new Date().toISOString().slice(0, 10),
+        mfg: base?.mfg || "",
+        product_title: "",
+        variant_title: "Default Title",
+        sku: "",
+        qty: 0,
+        qty_received: 0,
+        diff: 0,
+        po_number: selectedPo,
+        status: poStatus || "Pending",
+      },
+    ]);
+    setEditing(true);
+  };
+
+  const deletePopupRow = (index: number) => {
+    setPopupRows((current) =>
+      current.filter((_row, rowIndex) => rowIndex !== index)
+    );
+    setEditing(true);
+  };
+
   const savePopupRows = async () => {
     for (const row of popupRows) {
       const qty = Number(row.qty || 0);
@@ -204,6 +233,7 @@ export default function PurchaseOrdersPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          poNumber: selectedPo,
           rows: popupRows,
         }),
       });
@@ -214,11 +244,8 @@ export default function PurchaseOrdersPage() {
         throw new Error(data.error || "Error while saving");
       }
 
-      const hasMissing = data.results?.some(
-        (result: { status: string }) => result.status === "Row not found"
-      );
-
-      setPopupMessage(hasMissing ? "Row not found" : "Updated successfully");
+      setPopupMessage("Updated successfully");
+      setPopupRows(data.purchaseOrders || []);
       await loadPurchaseOrders();
       setEditing(false);
     } catch (error) {
@@ -383,6 +410,15 @@ export default function PurchaseOrdersPage() {
                     ))}
                   </select>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={addPopupRow}
+                  className="btn-secondary"
+                >
+                  <Plus size={14} />
+                  Add Row
+                </button>
               </div>
 
               {popupMessage && (
@@ -408,6 +444,7 @@ export default function PurchaseOrdersPage() {
                       <th className="px-3 py-2 text-right">Qty Rcvd</th>
                       <th className="px-3 py-2 text-right">Difference</th>
                       <th className="px-3 py-2 text-left">Status</th>
+                      <th className="px-3 py-2 text-center">Action</th>
                     </tr>
                   </thead>
 
@@ -503,6 +540,17 @@ export default function PurchaseOrdersPage() {
                               <option key={status}>{status}</option>
                             ))}
                           </select>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => deletePopupRow(index)}
+                            disabled={!editing}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Delete purchase order row"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </td>
                       </tr>
                     ))}
