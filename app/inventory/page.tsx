@@ -273,17 +273,22 @@ function isEmailAddress(value: string | undefined | null) {
 
 function getVendorEmailAddress(vendor: VendorRow | null) {
   if (!vendor) return "";
-  const link = String(vendor.link || "").trim();
   const email = String(vendor.email || "").trim();
+  const link = String(vendor.link || "").trim();
 
-  // Prefer link field — it may contain comma-separated vendor contact emails
+  // EMAIL field is the vendor TO address; support comma-separated entries
+  const emailAddresses = email
+    .split(",")
+    .map((s) => s.trim())
+    .filter(isEmailAddress);
+  if (emailAddresses.length > 0) return emailAddresses.join(", ");
+
+  // Fall back to link field if email is empty
   const linkEmails = link
     .split(",")
     .map((s) => s.trim())
     .filter(isEmailAddress);
   if (linkEmails.length > 0) return linkEmails.join(", ");
-
-  if (isEmailAddress(email)) return email;
 
   return "";
 }
@@ -709,7 +714,7 @@ export default function InventoryPage() {
     }
 
     const poSnapshotDate = getPurchaseOrderDate(effectiveDate || getTodayDate());
-    const expectedPoNumber = buildPoNumber(activePoVendor, poSnapshotDate);
+    const expectedPoNumber = buildPoNumber(activeVendorDetails?.code || activePoVendor, poSnapshotDate);
 
     fetch("/api/purchase-orders")
       .then(async (response) => {
@@ -783,7 +788,7 @@ export default function InventoryPage() {
 
   const ensurePoNumber = () => {
     const poSnapshotDate = getPurchaseOrderDate(effectiveDate || poRows[0]?.date || getTodayDate());
-    return buildPoNumber(activePoVendor ?? poRows[0]?.vendor ?? "PO", poSnapshotDate);
+    return buildPoNumber(activeVendorDetails?.code || activePoVendor ?? poRows[0]?.vendor ?? "PO", poSnapshotDate);
   };
 
   const buildPurchaseOrderPayloadRows = (poNumber: string) => {
@@ -867,7 +872,7 @@ export default function InventoryPage() {
     }
 
     const poDate = getPurchaseOrderDate(effectiveDate || poRows[0]?.date);
-    const poNumber = savedPoNumber || buildPoNumber(activePoVendor, poDate);
+    const poNumber = savedPoNumber || buildPoNumber(activeVendorDetails?.code || activePoVendor, poDate);
 
     return buildPdfOrderPreview({
       poNumber,
@@ -1027,7 +1032,7 @@ export default function InventoryPage() {
     const dateCode = formatPoDate(poDate);
     const vendorName = activePoVendor ?? poRows[0]?.vendor ?? "Vendor";
     const vendorCode = activeVendorDetails?.code || vendorName;
-    const poNumber = savedPoNumber || buildPoNumber(vendorName, poDate);
+    const poNumber = savedPoNumber || buildPoNumber(vendorCode, poDate);
     const settings = activeVendorDetails?.settings ?? null;
     const usesPdfFormat = vendorUsesPdfFormat(settings);
     const tableColumns =
