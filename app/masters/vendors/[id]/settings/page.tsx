@@ -35,6 +35,12 @@ type PdfSkuMapping = {
   itemName: string;
 };
 
+type PdfFormField = {
+  key: string;
+  label: string;
+  value: string;
+};
+
 type VendorSettings = {
   emailSubject: string;
   emailBody: string;
@@ -42,6 +48,7 @@ type VendorSettings = {
   pdfEnabled: boolean;
   pdfSampleName: string;
   pdfEditableFields: string[];
+  pdfFormFields: PdfFormField[];
   pdfSkuMappings: PdfSkuMapping[];
   tableColumns: TableColumn[];
 };
@@ -123,7 +130,59 @@ function getTodayCodeDate() {
     .replace(/\//g, ".");
 }
 
+function getTodaySlashDate() {
+  return new Date().toLocaleDateString("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function getDefaultPdfFormFields(vendor?: VendorRow | null): PdfFormField[] {
+  const today = getTodaySlashDate();
+
+  if (isNutridynVendor(vendor)) {
+    return [
+      { key: "orderDate", label: "Order Date", value: today },
+      { key: "accountNumber", label: "Account Number", value: "702613" },
+      { key: "name", label: "Name", value: "Rhya Pachin" },
+      { key: "businessName", label: "Business Name", value: "Vidal Nutrition" },
+      {
+        key: "shippingAddress",
+        label: "Shipping Address",
+        value: "11915 Enterprise Drive\nCincinnati, OH 45241",
+      },
+      {
+        key: "billingAddress",
+        label: "Billing Address",
+        value: "11365 Sixth Street East, Treasure Island, FL 33706",
+      },
+      {
+        key: "paymentMethod",
+        label: "Payment Method",
+        value: "Card ending with 1329",
+      },
+      {
+        key: "notes",
+        label: "Notes",
+        value: "All Private Labeled items for Vidal",
+      },
+    ];
+  }
+
+  return [
+    { key: "orderDate", label: "Order Date", value: today },
+    { key: "accountNumber", label: "Account Number", value: "" },
+    { key: "shippingAddress", label: "Shipping Address", value: "" },
+    { key: "billingAddress", label: "Billing Address", value: "" },
+    { key: "paymentMethod", label: "Payment Method", value: "" },
+    { key: "notes", label: "Notes", value: "" },
+  ];
+}
+
 function getDefaultSettings(vendor?: VendorRow | null): VendorSettings {
+  const pdfFormFields = getDefaultPdfFormFields(vendor);
+
   return {
     emailSubject: `${vendor?.code || "CODE"} x ${getTodayCodeDate()}`,
     emailBody: `Hi {{contact}},
@@ -141,6 +200,7 @@ Thanks`,
     pdfEnabled: false,
     pdfSampleName: "",
     pdfEditableFields: defaultPdfFields,
+    pdfFormFields,
     pdfSkuMappings: isNutridynVendor(vendor) ? nutridynPdfSkuMappings : [],
     tableColumns: defaultColumns,
   };
@@ -167,6 +227,14 @@ function normalizeSettings(
       settings.pdfEditableFields.length > 0
         ? settings.pdfEditableFields
         : defaults.pdfEditableFields,
+    pdfFormFields:
+      Array.isArray(settings?.pdfFormFields) && settings.pdfFormFields.length > 0
+        ? settings.pdfFormFields.map((field) =>
+            field.key === "orderDate" && !field.value
+              ? { ...field, value: getTodaySlashDate() }
+              : field
+          )
+        : defaults.pdfFormFields,
     pdfSkuMappings:
       Array.isArray(settings?.pdfSkuMappings) &&
       settings.pdfSkuMappings.length > 0
@@ -303,8 +371,6 @@ export default function VendorSettingsPage() {
     [allVendors]
   );
 
-  const pdfFieldOptions = defaultPdfFields;
-
   useEffect(() => {
     return () => {
       if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
@@ -361,16 +427,48 @@ export default function VendorSettingsPage() {
     );
   };
 
-  const togglePdfEditableField = (field: string) => {
-    setSettings((current) => {
-      if (!current) return current;
+  const addPdfFormField = () => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            pdfFormFields: [
+              ...current.pdfFormFields,
+              { key: `custom-${Date.now()}`, label: "", value: "" },
+            ],
+          }
+        : current
+    );
+  };
 
-      const fields = current.pdfEditableFields.includes(field)
-        ? current.pdfEditableFields.filter((item) => item !== field)
-        : [...current.pdfEditableFields, field];
+  const updatePdfFormField = (
+    index: number,
+    key: keyof PdfFormField,
+    value: string
+  ) => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            pdfFormFields: current.pdfFormFields.map((field, fieldIndex) =>
+              fieldIndex === index ? { ...field, [key]: value } : field
+            ),
+          }
+        : current
+    );
+  };
 
-      return { ...current, pdfEditableFields: fields };
-    });
+  const removePdfFormField = (index: number) => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            pdfFormFields: current.pdfFormFields.filter(
+              (_field, fieldIndex) => fieldIndex !== index
+            ),
+          }
+        : current
+    );
   };
 
   const addPdfSkuMapping = () => {
@@ -738,34 +836,69 @@ export default function VendorSettingsPage() {
               )}
             </div>
 
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase text-slate-500">
-                Editable PDF Details
-              </p>
-              <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-                {pdfFieldOptions.map((field) => {
-                  const selected = settings.pdfEditableFields.includes(field);
+            <div className="rounded-xl border border-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    PDF Form Fields
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Editable boxes for the header details on the vendor PDF.
+                    Order Date defaults to today and can be manually changed.
+                  </p>
+                </div>
 
-                  return (
-                  <label
-                    key={field}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
-                      selected
-                        ? "border-yellow-300 bg-yellow-100 text-slate-950"
-                        : "border-slate-200 text-slate-800"
-                    }`}
+                <button
+                  type="button"
+                  onClick={addPdfFormField}
+                  disabled={!settings.pdfEnabled}
+                  className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus size={14} />
+                  Add Field
+                </button>
+              </div>
+
+              <div className="grid gap-3 p-4 md:grid-cols-2">
+                {settings.pdfFormFields.map((field, index) => (
+                  <div
+                    key={`${field.key}-${index}`}
+                    className="rounded-lg border border-yellow-300 bg-yellow-50 p-3"
                   >
-                    <input
-                      type="checkbox"
+                    <div className="mb-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={field.label}
+                        disabled={!settings.pdfEnabled}
+                        onChange={(event) =>
+                          updatePdfFormField(index, "label", event.target.value)
+                        }
+                        placeholder="Field label"
+                        className="h-9 flex-1 rounded-lg border border-yellow-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePdfFormField(index)}
+                        disabled={!settings.pdfEnabled}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Delete PDF form field"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+
+                    <textarea
+                      value={field.value}
                       disabled={!settings.pdfEnabled}
-                      checked={selected}
-                      onChange={() => togglePdfEditableField(field)}
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                      onChange={(event) =>
+                        updatePdfFormField(index, "value", event.target.value)
+                      }
+                      rows={field.key === "shippingAddress" || field.key === "billingAddress" ? 3 : 2}
+                      placeholder="Field value"
+                      className="w-full rounded-lg border border-yellow-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 disabled:bg-slate-100"
                     />
-                    {field}
-                  </label>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
 

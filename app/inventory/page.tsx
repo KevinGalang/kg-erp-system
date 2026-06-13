@@ -112,6 +112,12 @@ type PdfSkuMapping = {
   itemName: string;
 };
 
+type PdfFormField = {
+  key?: string;
+  label: string;
+  value: string;
+};
+
 type VendorSettings = {
   emailSubject?: string;
   emailBody?: string;
@@ -119,6 +125,7 @@ type VendorSettings = {
   pdfEnabled?: boolean;
   pdfSampleName?: string;
   pdfEditableFields?: string[];
+  pdfFormFields?: PdfFormField[];
   pdfSkuMappings?: PdfSkuMapping[];
   tableColumns?: VendorTableColumn[];
 };
@@ -274,6 +281,11 @@ function getPurchaseOrderDate(dateValue: string | Date | undefined) {
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function getPdfDisplayDate(dateValue: string | Date | undefined) {
+  const date = parseLocalDate(dateValue);
+  return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
 }
 
 function normalizeText(value: string) {
@@ -783,24 +795,70 @@ export default function InventoryPage() {
       settings?.pdfEnabled && Array.isArray(settings.pdfSkuMappings)
         ? settings.pdfSkuMappings
         : [];
+    const poDateValue = effectiveDate || poRows[0]?.date || getTodayDate();
+    const poDate = getPurchaseOrderDate(poDateValue);
+    const displayDate = getPdfDisplayDate(poDateValue);
+    const pdfFormFields =
+      settings?.pdfEnabled && Array.isArray(settings.pdfFormFields)
+        ? settings.pdfFormFields
+            .filter((field) => field.label.trim())
+            .map((field) =>
+              field.key === "orderDate" && !field.value.trim()
+                ? { ...field, value: displayDate }
+                : field
+            )
+        : [];
     const mappingBySku = new Map(
       pdfMappings
         .filter((mapping) => mapping.sku)
         .map((mapping) => [normalizeText(mapping.sku), mapping])
     );
-    const usesVendorPdfConfiguration = settings?.pdfEnabled && pdfMappings.length > 0;
+    const usesVendorPdfConfiguration = Boolean(settings?.pdfEnabled);
     let y = 18;
 
     doc.setFontSize(16);
-    doc.text(usesVendorPdfConfiguration ? `${activePoVendor} Order` : "Purchase Order", 14, y);
+    doc.text(
+      usesVendorPdfConfiguration ? `${activePoVendor} Order` : "Purchase Order",
+      14,
+      y
+    );
     y += 9;
     doc.setFontSize(10);
-    doc.text(`PO Number: ${poNumber}`, 14, y);
-    y += 6;
-    doc.text(`Vendor: ${activePoVendor}`, 14, y);
-    y += 6;
-    doc.text(`Date: ${getPurchaseOrderDate(effectiveDate || poRows[0]?.date || getTodayDate())}`, 14, y);
-    y += 9;
+
+    if (usesVendorPdfConfiguration && pdfFormFields.length > 0) {
+      const leftX = 14;
+      const rightX = 108;
+      const labelWidth = 31;
+      const valueWidth = 48;
+
+      pdfFormFields.forEach((field, index) => {
+        const x = index % 2 === 0 ? leftX : rightX;
+        const value = field.value.trim() || (field.key === "orderDate" ? displayDate : "");
+        const valueLines = doc.splitTextToSize(value || "-", valueWidth);
+
+        doc.setFont("helvetica", "bold");
+        doc.text(`${field.label}:`, x, y);
+        doc.setFont("helvetica", "normal");
+        doc.text(valueLines, x + labelWidth, y);
+
+        if (index % 2 === 1) {
+          y += Math.max(7, valueLines.length * 5);
+        }
+      });
+
+      if (pdfFormFields.length % 2 === 1) {
+        y += 7;
+      }
+
+      y += 4;
+    } else {
+      doc.text(`PO Number: ${poNumber}`, 14, y);
+      y += 6;
+      doc.text(`Vendor: ${activePoVendor}`, 14, y);
+      y += 6;
+      doc.text(`Date: ${poDate}`, 14, y);
+      y += 9;
+    }
 
     doc.setFontSize(9);
     if (usesVendorPdfConfiguration) {
