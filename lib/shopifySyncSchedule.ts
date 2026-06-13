@@ -24,7 +24,6 @@ export type ScheduleCheck = {
 const SCHEDULE_NAME = "shopify-inventory";
 const DAY_CODES = ["S", "M", "T", "W", "T2", "F", "S2"];
 const DEFAULT_TIMEZONE = "America/New_York";
-const SCHEDULE_GRACE_MINUTES = 60;
 
 export const defaultShopifySyncSchedule: ShopifySyncSchedule = {
   time: "08:00",
@@ -133,15 +132,10 @@ export function checkShopifySyncSchedule(
   const currentMinutes = timeToMinutes(parts.localTime);
   const scheduleMinutes = timeToMinutes(schedule.time);
 
-  const minutesAfterScheduled =
-    currentMinutes === null || scheduleMinutes === null
-      ? null
-      : currentMinutes - scheduleMinutes;
-
-  const isWithinScheduleWindow =
-    minutesAfterScheduled !== null &&
-    minutesAfterScheduled >= 0 &&
-    minutesAfterScheduled < SCHEDULE_GRACE_MINUTES;
+  const hasReachedScheduledTime =
+    currentMinutes !== null &&
+    scheduleMinutes !== null &&
+    currentMinutes >= scheduleMinutes;
 
   if (!schedule.enabled) {
     return { ...parts, runKey, due: false, reason: "Schedule is disabled." };
@@ -160,12 +154,12 @@ export function checkShopifySyncSchedule(
     };
   }
 
-  if (!isWithinScheduleWindow) {
+  if (!hasReachedScheduledTime) {
     return {
       ...parts,
       runKey,
       due: false,
-      reason: "Current time is outside the schedule window.",
+      reason: "Current time is before the scheduled time.",
     };
   }
 
