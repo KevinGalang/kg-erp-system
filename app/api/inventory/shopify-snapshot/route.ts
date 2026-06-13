@@ -7,6 +7,8 @@ import {
   fetchForecastMasterData,
   fetchShipheroOnOrderBySku,
   mergeSalesBySku,
+  resolveUomForSku,
+  type ItemMasterRow,
   type ShopifySnapshotRow,
   toInventoryClientRow,
 } from "@/lib/inventoryForecast";
@@ -121,7 +123,10 @@ function numberValue(value: number | null | undefined) {
   return Number(value ?? 0);
 }
 
-function savedSnapshotRowsToClientRows(rows: SavedSnapshotRow[]) {
+function savedSnapshotRowsToClientRows(
+  rows: SavedSnapshotRow[],
+  itemBySku: Map<string, ItemMasterRow>
+) {
   const grouped = new Map<string, SavedSnapshotRow>();
 
   for (const row of rows) {
@@ -161,7 +166,7 @@ function savedSnapshotRowsToClientRows(rows: SavedSnapshotRow[]) {
     reviewPeriod: row.review_period ?? "",
     leadTimeWeeks: numberValue(row.lead_time_weeks),
     reviewPeriodWeeks: numberValue(row.review_period_weeks),
-    uom: numberValue(row.uom) || 1,
+    uom: resolveUomForSku(row.sku, itemBySku, numberValue(row.uom) || 1),
   }));
 }
 
@@ -251,10 +256,11 @@ export async function GET(request: Request) {
     }
 
     if (snapshotRows[0] && hasSavedForecastColumns(snapshotRows[0])) {
+      const { itemBySku } = await fetchForecastMasterData(supabaseAdmin);
       const responseData = {
         snapshotDate,
         dates,
-        rows: savedSnapshotRowsToClientRows(snapshotRows),
+        rows: savedSnapshotRowsToClientRows(snapshotRows, itemBySku),
       };
 
       inventoryCache.set(cacheKey, {

@@ -131,6 +131,20 @@ export function parseUom(value: string | null | undefined) {
   return parsed > 0 ? parsed : 1;
 }
 
+export function resolveUomForSku(
+  sku: string,
+  itemBySku: Map<string, ItemMasterRow>,
+  fallback = 1
+) {
+  const itemMaster = itemBySku.get(normalizeKey(sku));
+
+  if (itemMaster?.uom) {
+    return parseUom(itemMaster.uom);
+  }
+
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
+}
+
 export function roundUpToUom(value: number, uom: number) {
   const safeUom = uom > 0 ? uom : 1;
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;

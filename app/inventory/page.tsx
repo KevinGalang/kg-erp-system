@@ -119,15 +119,26 @@ function escapeHtml(value: string | number) {
     .replace(/'/g, "&#39;");
 }
 
-function roundToUom(value: number, uom: number) {
-  const safeUom = uom > 0 ? uom : 1;
+function roundToNearestUom(value: number, uom: number) {
+  const safeUom = Number.isFinite(uom) && uom > 0 ? uom : 1;
   const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
 
   if (safeValue === 0 || safeUom <= 1) {
     return safeValue;
   }
 
-  return Math.max(safeUom, Math.round(safeValue / safeUom) * safeUom);
+  return Math.round(safeValue / safeUom) * safeUom;
+}
+
+function isUomMultiple(value: number, uom: number) {
+  const safeUom = Number.isFinite(uom) && uom > 0 ? uom : 1;
+  const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+
+  if (safeValue === 0 || safeUom <= 1) {
+    return true;
+  }
+
+  return safeValue % safeUom === 0;
 }
 
 function normalizeVendor(value: string) {
@@ -269,9 +280,10 @@ export default function InventoryPage() {
   const [scheduleDays, setScheduleDays] = useState<string[]>(() => getSavedSyncSchedule().days);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [inventoryMessage, setInventoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [uomNotice, setUomNotice] = useState<string | null>(null);
+  const [uomNoticeSku, setUomNoticeSku] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [approvedQtyBySku, setApprovedQtyBySku] = useState<Record<string, number>>({});
+  const [approvedQtyDraftBySku, setApprovedQtyDraftBySku] = useState<Record<string, string>>({});
   const [, setApprovedSaveBySku] = useState<Record<string, ApprovedSaveState>>({});
   const [activeApprovedSku, setActiveApprovedSku] = useState<string | null>(null);
   const [hoveredApprovedSku, setHoveredApprovedSku] = useState<string | null>(null);
@@ -301,20 +313,20 @@ export default function InventoryPage() {
   const [openDropdown, setOpenDropdown] = useState<ColumnFilterKey | null>(null);
 
   useEffect(() => {
-    if (!uomNotice) {
+    if (!uomNoticeSku) {
       return;
     }
 
     const timer = window.setTimeout(() => {
-      setUomNotice(null);
+      setUomNoticeSku(null);
     }, 3000);
 
     return () => window.clearTimeout(timer);
-  }, [uomNotice]);
+  }, [uomNoticeSku]);
 
-  const showUomNotice = (uom: number) => {
-    if (uom > 1) {
-      setUomNotice(`UOM is ${uom}. Approved quantity was rounded to the nearest UOM.`);
+  const showUomNotice = (sku: string, uom: number) => {
+    if (Number.isFinite(uom) && uom > 1) {
+      setUomNoticeSku(sku);
     }
   };
 
@@ -556,9 +568,40 @@ export default function InventoryPage() {
     return inventoryRows.filter((row) => row.date === effectiveDate);
   }, [inventoryRows, effectiveDate]);
 
-  const getApprovedQty = useCallback((row: InventoryRow) => {
-    return Number(approvedQtyBySku[row.sku] ?? row.qtyApproved ?? 0);
-  }, [approvedQtyBySku]);
+  const getApprovedQtyNumber = useCallback(
+    (row: InventoryRow) => {
+      if (approvedQtyDraftBySku[row.sku] !== undefined) {
+        const draft = approvedQtyDraftBySku[row.sku].trim();
+
+        if (!draft) {
+          return 0;
+        }
+
+        const parsed = Number(draft);
+        return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+      }
+
+      return Number(approvedQtyBySku[row.sku] ?? row.qtyApproved ?? 0);
+    },
+    [approvedQtyBySku, approvedQtyDraftBySku]
+  );
+
+  const getApprovedDisplayValue = useCallback(
+    (row: InventoryRow) => {
+      if (approvedQtyDraftBySku[row.sku] !== undefined) {
+        return approvedQtyDraftBySku[row.sku];
+      }
+
+      const qty = Number(approvedQtyBySku[row.sku] ?? row.qtyApproved ?? 0);
+      return qty > 0 ? String(qty) : "";
+    },
+    [approvedQtyBySku, approvedQtyDraftBySku]
+  );
+
+  const getApprovedQty = useCallback(
+    (row: InventoryRow) => getApprovedQtyNumber(row),
+    [getApprovedQtyNumber]
+  );
 
   const poRows = useMemo(() => {
     if (!activePoVendor) {
@@ -1017,29 +1060,63 @@ export default function InventoryPage() {
     }
   };
 
-  const setApprovedQty = (sku: string, value: number) => {
-    const nextValue = Number.isFinite(value) ? Math.max(0, value) : 0;
-    setApprovedQtyBySku((prev) => ({ ...prev, [sku]: nextValue }));
+  const setApprovedQty = (sku: string, rawValue: string) => {
+    setActiveApprovedSku(sku);
+    setApprovedQtyDraftBySku((prev) => ({ ...prev, [sku]: rawValue }));
   };
 
-  const commitApprovedQty = (row: InventoryRow, value: number) => {
-    const nextValue = roundToUom(value, row.uom);
+  const beginApprovedQtyEdit = (row: InventoryRow) => {
+    setActiveApprovedSku(row.sku);
+    setApprovedQtyDraftBySku((prev) => {
+      if (prev[row.sku] !== undefined) {
+        return prev;
+      }
 
-    if (nextValue !== Math.max(0, Number.isFinite(value) ? value : 0)) {
-      showUomNotice(row.uom);
+      const qty = Number(approvedQtyBySku[row.sku] ?? row.qtyApproved ?? 0);
+      return { ...prev, [row.sku]: qty > 0 ? String(qty) : "" };
+    });
+  };
+
+  const commitApprovedQty = (row: InventoryRow, rawInput?: string) => {
+    const draft =
+      rawInput ??
+      approvedQtyDraftBySku[row.sku] ??
+      (() => {
+        const qty = Number(approvedQtyBySku[row.sku] ?? row.qtyApproved ?? 0);
+        return qty > 0 ? String(qty) : "";
+      })();
+    const rawValue =
+      draft === undefined || draft.trim() === "" ? 0 : Number(draft.trim());
+    const safeRawValue = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 0;
+    const nextValue = roundToNearestUom(safeRawValue, row.uom);
+
+    if (safeRawValue > 0 && nextValue !== safeRawValue) {
+      showUomNotice(row.sku, row.uom);
     }
 
+    setApprovedQtyDraftBySku((prev) => {
+      const next = { ...prev };
+      delete next[row.sku];
+      return next;
+    });
     setApprovedQtyBySku((prev) => ({ ...prev, [row.sku]: nextValue }));
     void saveApprovedQty(row, nextValue);
   };
 
-  const bumpQty = (row: InventoryRow, direction: 1 | -1, fallback = 0) => {
-    const current = approvedQtyBySku[row.sku] ?? fallback;
-    const step = row.uom > 0 ? row.uom : 1;
-    const nextValue = current + direction * step;
-    const approvedValue = roundToUom(nextValue, step);
-    setApprovedQtyBySku((prev) => ({ ...prev, [row.sku]: approvedValue }));
-    void saveApprovedQty(row, approvedValue);
+  const bumpQty = (row: InventoryRow, direction: 1 | -1) => {
+    const step = Number.isFinite(row.uom) && row.uom > 0 ? row.uom : 1;
+    const rawCurrent = getApprovedQtyNumber(row);
+    const current = rawCurrent > 0 ? roundToNearestUom(rawCurrent, row.uom) : 0;
+    const nextValue = Math.max(0, current + direction * step);
+
+    setActiveApprovedSku(row.sku);
+    setApprovedQtyDraftBySku((prev) => {
+      const next = { ...prev };
+      delete next[row.sku];
+      return next;
+    });
+    setApprovedQtyBySku((prev) => ({ ...prev, [row.sku]: nextValue }));
+    void saveApprovedQty(row, nextValue);
   };
 
   const setColumnFilter = (key: ColumnFilterKey, value: string) => {
@@ -1057,7 +1134,7 @@ export default function InventoryPage() {
     { label: "90D Sales", key: "sell90Day", align: "text-right", width: "w-[82px]" },
     { label: "Weekly", key: "weeklyRate", align: "text-right", width: "w-[70px]" },
     { label: "Needed", key: "qtyNeeded", align: "text-right", width: "w-[75px]" },
-    { label: "Approved", key: "qtyApproved", width: "w-[132px]" },
+    { label: "Approved", key: "qtyApproved", width: "w-[190px]" },
     { label: "Days", key: "daysOfInventory", align: "text-right", width: "w-[65px]" },
     ...(showLeadColumns
       ? [
@@ -1164,12 +1241,6 @@ export default function InventoryPage() {
           </div>
         )}
       </div>
-
-      {uomNotice && (
-        <div className="fixed bottom-5 right-5 z-[60] rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-lg">
-          {uomNotice}
-        </div>
-      )}
 
       {syncModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1447,7 +1518,7 @@ export default function InventoryPage() {
           </div>
         </div>
       ) : (
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-xs">
             <thead className="bg-slate-100 text-slate-700">
@@ -1490,7 +1561,6 @@ export default function InventoryPage() {
                 </tr>
               )}
               {!loadingInventory && sortedRows.map((row, index) => {
-                const approvedQty = approvedQtyBySku[row.sku] ?? row.qtyApproved;
                 const isActive = activeApprovedSku === row.sku;
                 const showApprovedControls = isActive || hoveredApprovedSku === row.sku;
                 const nextRow = sortedRows[index + 1];
@@ -1513,38 +1583,60 @@ export default function InventoryPage() {
                     <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.weeklyRate}</td>
                     <td className="whitespace-nowrap px-2.5 py-2.5 text-right font-semibold tabular-nums">{row.qtyNeeded}</td>
                     <td
-                      className="px-2.5 py-2.5"
+                      className="overflow-visible px-2.5 py-2.5"
                       onMouseEnter={() => setHoveredApprovedSku(row.sku)}
                       onMouseLeave={() => setHoveredApprovedSku(null)}
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <div className="flex items-center justify-center">
+                      <div className="relative flex items-center justify-center gap-1.5">
                         <div className={`flex min-w-[116px] overflow-hidden rounded-lg border bg-white ${isActive ? "border-slate-900" : "border-slate-300"}`}>
                           {showApprovedControls && (
-                            <button type="button" onClick={() => bumpQty(row, -1, approvedQty)} className="flex h-7 w-7 shrink-0 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100">
+                            <button
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => bumpQty(row, -1)}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center border-r border-slate-300 text-slate-600 hover:bg-slate-100"
+                            >
                               <Minus size={12} />
                             </button>
                           )}
                           <input
-                            type="number" min={0} value={approvedQty}
-                            onFocus={() => setActiveApprovedSku(row.sku)}
-                            onClick={() => setActiveApprovedSku(row.sku)}
-                            onChange={(e) => setApprovedQty(row.sku, Number(e.target.value))}
-                            onBlur={(event) => commitApprovedQty(row, Number(event.currentTarget.value))}
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={getApprovedDisplayValue(row)}
+                            onFocus={() => beginApprovedQtyEdit(row)}
+                            onClick={() => beginApprovedQtyEdit(row)}
+                            onChange={(e) => setApprovedQty(row.sku, e.target.value.replace(/[^\d]/g, ""))}
+                            onBlur={() => {
+                              commitApprovedQty(row);
+                              setActiveApprovedSku(null);
+                            }}
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
-                                commitApprovedQty(row, Number(event.currentTarget.value));
+                                commitApprovedQty(row);
                                 event.currentTarget.blur();
                               }
                             }}
+                            placeholder=""
                             className="h-7 min-w-0 flex-1 border-0 bg-white px-1 text-center text-xs font-semibold outline-none"
                           />
                           {showApprovedControls && (
-                            <button type="button" onClick={() => bumpQty(row, 1, approvedQty)} className="flex h-7 w-7 shrink-0 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100">
+                            <button
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => bumpQty(row, 1)}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center border-l border-slate-300 text-slate-600 hover:bg-slate-100"
+                            >
                               <Plus size={12} />
                             </button>
                           )}
                         </div>
+                        {uomNoticeSku === row.sku && (
+                          <span className="whitespace-nowrap text-[10px] font-semibold text-red-600">
+                            UOM is {row.uom}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-2.5 py-2.5 text-right tabular-nums">{row.daysOfInventory}</td>
