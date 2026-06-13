@@ -788,7 +788,7 @@ export default function InventoryPage() {
 
   const ensurePoNumber = () => {
     const poSnapshotDate = getPurchaseOrderDate(effectiveDate || poRows[0]?.date || getTodayDate());
-    return buildPoNumber(activeVendorDetails?.code || activePoVendor ?? poRows[0]?.vendor ?? "PO", poSnapshotDate);
+    return buildPoNumber(activeVendorDetails?.code || (activePoVendor ?? poRows[0]?.vendor ?? "PO"), poSnapshotDate);
   };
 
   const buildPurchaseOrderPayloadRows = (poNumber: string) => {
