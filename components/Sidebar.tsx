@@ -11,6 +11,7 @@ import {
   CalendarRange,
   Folder,
   FileX2,
+  PackageCheck,
   BookOpen,
   Building2,
   PackageSearch,
@@ -46,12 +47,13 @@ const menuItems: MenuItem[] = [
         icon: CalendarDays,
       },
       {
-        label: "Fulfillment",
+        label: "Purchase Order",
         href: "/purchase-orders",
         icon: ClipboardList,
       },
     ],
   },
+  { label: "Fulfillment", href: "/reports/in-transit", icon: PackageCheck },
   { label: "Weekly Reports", href: "/reports/weekly", icon: CalendarDays },
   { label: "Monthly Reports", href: "/reports/monthly", icon: CalendarRange },
   {
