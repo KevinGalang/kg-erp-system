@@ -15,6 +15,8 @@ export type VendorPdfSettings = {
   emailBody?: string;
   pdfEmailBody?: string;
   pdfEnabled?: boolean;
+  pdfTemplate?: string;
+  pdfUnitPrice?: string | number;
   pdfSampleName?: string;
   pdfEditableFields?: string[];
   pdfFormFields?: PdfFormField[];
@@ -30,11 +32,16 @@ export type PdfOrderLineItem = {
   itemSku: string;
   itemName: string;
   qty: number;
+  unitPrice?: number;
+  total?: number;
 };
 
 export type PdfOrderPreview = {
   poNumber: string;
   vendorName: string;
+  template?: string;
+  unitPrice?: number;
+  totalAmount?: number;
   formFields: PdfFormField[];
   rows: PdfOrderLineItem[];
   fieldsHtml: string;
@@ -75,9 +82,42 @@ function escapeHtml(value: string | number) {
     .replace(/'/g, "&#39;");
 }
 
+function mergePdfFormFields(defaults: PdfFormField[], existing: PdfFormField[]) {
+  const usedExisting = new Set<number>();
+  const merged = defaults.map((defaultField) => {
+    const defaultKey = normalizeMatchKey(defaultField.key || defaultField.label);
+    const existingIndex = existing.findIndex((field, index) => {
+      if (usedExisting.has(index)) return false;
+      return (
+        normalizeMatchKey(field.key || field.label) === defaultKey ||
+        normalizeMatchKey(field.label) === normalizeMatchKey(defaultField.label)
+      );
+    });
+
+    if (existingIndex < 0) {
+      return defaultField;
+    }
+
+    usedExisting.add(existingIndex);
+    return {
+      ...defaultField,
+      ...existing[existingIndex],
+      key: defaultField.key || existing[existingIndex].key,
+      label: defaultField.label,
+    };
+  });
+  const extras = existing.filter((field, index) => !usedExisting.has(index));
+  return [...merged, ...extras];
+}
+
 export function isNutridynVendor(vendorName: string, vendorCode = "") {
   const vendorText = `${vendorName} ${vendorCode}`.toLowerCase();
   return vendorText.includes("nutridyn") || vendorText.includes("nutri-dyn");
+}
+
+export function isBondiPureVendor(vendorName: string, vendorCode = "") {
+  const vendorText = `${vendorName} ${vendorCode}`.toLowerCase();
+  return vendorText.includes("bondi");
 }
 
 export function getTodaySlashDate() {
@@ -123,6 +163,22 @@ export function getDefaultPdfFormFields(
     ];
   }
 
+  if (isBondiPureVendor(vendorName, vendorCode)) {
+    return [
+      { key: "purchaseOrderDate", label: "Purchase Order Date", value: today },
+      { key: "deliveryDate", label: "Delivery Date", value: "" },
+      { key: "purchaseOrderNumber", label: "Purchase Order Number", value: "" },
+      {
+        key: "deliveryAddress",
+        label: "Delivery Address",
+        value: "11915 Enterprise Drive\nCincinnati, OH\n45241, USA",
+      },
+      { key: "deliveryInstructions", label: "Delivery Instructions", value: "" },
+      { key: "attention", label: "Attention", value: "David or Mendel" },
+      { key: "telephone", label: "Telephone", value: "1 855 7372655" },
+    ];
+  }
+
   return [
     { key: "orderDate", label: "Order Date", value: today },
     { key: "accountNumber", label: "Account Number", value: "" },
@@ -148,26 +204,55 @@ export function normalizeVendorPdfSettings(
   const defaultMappings = isNutridynVendor(vendorName, vendorCode)
     ? NUTRIDYN_PDF_SKU_MAPPINGS
     : [];
+  const isBondi = isBondiPureVendor(vendorName, vendorCode);
+  const savedFields =
+    Array.isArray(settings?.pdfFormFields) && settings.pdfFormFields.length > 0
+      ? settings.pdfFormFields
+      : [];
+  const filteredSavedFields = savedFields.filter(
+    (field) => !isBondi || normalizeMatchKey(field.label) !== "taxamountusd"
+  );
+  const pdfFormFields =
+    filteredSavedFields.length > 0
+      ? (isBondi
+          ? mergePdfFormFields(defaults, filteredSavedFields)
+          : filteredSavedFields
+        ).map((field) =>
+          (field.key === "orderDate" || field.key === "purchaseOrderDate") &&
+          !field.value
+            ? { ...field, value: getTodaySlashDate() }
+            : field
+        )
+      : defaults;
 
   return {
     ...settings,
     pdfEnabled: Boolean(settings?.pdfEnabled),
+    pdfTemplate: isBondi
+      ? "bondi-pure"
+      : settings?.pdfTemplate || "default",
+    pdfUnitPrice: settings?.pdfUnitPrice ?? (isBondi ? "37.50" : ""),
     pdfEmailBody:
       settings?.pdfEmailBody?.trim() ||
       "Hi {{contact}},\n\nKindly see attached for our order this week.\n\nThanks",
-    pdfFormFields:
-      Array.isArray(settings?.pdfFormFields) && settings.pdfFormFields.length > 0
-        ? settings.pdfFormFields.map((field) =>
-            field.key === "orderDate" && !field.value
-              ? { ...field, value: getTodaySlashDate() }
-              : field
-          )
-        : defaults,
+    pdfFormFields,
     pdfSkuMappings:
       Array.isArray(settings?.pdfSkuMappings) && settings.pdfSkuMappings.length > 0
         ? settings.pdfSkuMappings
         : defaultMappings,
   };
+}
+
+function toCurrencyNumber(value: unknown, fallback: number) {
+  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatCurrency(value: number) {
+  return `$${value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export function vendorUsesPdfFormat(
@@ -249,6 +334,57 @@ export function buildPdfOrderLineItems(
   });
 }
 
+function sumQtyForSku(
+  rows: Array<{
+    sku: string;
+    qty: number;
+  }>,
+  sku: string
+) {
+  const key = normalizeMatchKey(sku);
+  return rows
+    .filter((row) => normalizeMatchKey(row.sku) === key)
+    .reduce((total, row) => total + Number(row.qty || 0), 0);
+}
+
+function buildBondiPureLineItems(
+  rows: Array<{
+    sku: string;
+    qty: number;
+  }>,
+  unitPrice: number
+): PdfOrderLineItem[] {
+  const items = [
+    {
+      itemSku: "Bondipure",
+      itemName: "Bondi Pure Single Pouch - Original Flavor",
+      qty: sumQtyForSku(rows, "Bondipure"),
+    },
+    {
+      itemSku: "Bondipure-2",
+      itemName: "Bondi Pure Single Pouch - Green Apple Flavor",
+      qty: sumQtyForSku(rows, "Bondipure-2"),
+    },
+  ];
+
+  return items.map((item) => ({
+    ...item,
+    unitPrice,
+    total: item.qty * unitPrice,
+  }));
+}
+
+function getFieldValue(formFields: PdfFormField[], key: string, fallback = "") {
+  const normalizedKey = normalizeMatchKey(key);
+  const field = formFields.find(
+    (item) =>
+      normalizeMatchKey(item.key || "") === normalizedKey ||
+      normalizeMatchKey(item.label) === normalizedKey
+  );
+
+  return field?.value || fallback;
+}
+
 export function buildPdfPreviewHtml(
   poNumber: string,
   vendorName: string,
@@ -297,6 +433,105 @@ export function buildPdfPreviewHtml(
   return { fieldsHtml, rowsHtml, fullHtml };
 }
 
+export function buildBondiPurePdfPreviewHtml(
+  poNumber: string,
+  vendorName: string,
+  formFields: PdfFormField[],
+  rows: PdfOrderLineItem[],
+  unitPrice: number
+) {
+  const purchaseOrderDate = getFieldValue(
+    formFields,
+    "purchaseOrderDate",
+    getTodaySlashDate()
+  );
+  const deliveryDate = getFieldValue(formFields, "deliveryDate");
+  const purchaseOrderNumber = getFieldValue(
+    formFields,
+    "purchaseOrderNumber",
+    poNumber
+  );
+  const deliveryAddress = getFieldValue(formFields, "deliveryAddress");
+  const deliveryInstructions = getFieldValue(formFields, "deliveryInstructions");
+  const attention = getFieldValue(formFields, "attention");
+  const telephone = getFieldValue(formFields, "telephone");
+  const totalAmount = rows.reduce((total, row) => total + (row.total || 0), 0);
+
+  const rowsHtml = `
+    <table style="border-collapse:collapse;width:100%;max-width:760px;margin-top:28px;">
+      <thead>
+        <tr>
+          <th style="border-bottom:1px solid #111827;padding:4px 8px;text-align:left;">Description</th>
+          <th style="border-bottom:1px solid #111827;padding:4px 8px;text-align:right;">Quantity</th>
+          <th style="border-bottom:1px solid #111827;padding:4px 8px;text-align:right;">Unit Price</th>
+          <th style="border-bottom:1px solid #111827;padding:4px 8px;text-align:right;">Amount USD</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows
+          .map(
+            (row) =>
+              `<tr><td style="padding:8px;">${escapeHtml(row.itemName)}</td><td style="padding:8px;text-align:right;">${escapeHtml(row.qty)}</td><td style="padding:8px;text-align:right;">${escapeHtml(formatCurrency(unitPrice))}</td><td style="padding:8px;text-align:right;">${escapeHtml(formatCurrency(row.total || 0))}</td></tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+
+  const fieldsHtml = `
+    <div style="display:flex;justify-content:space-between;gap:24px;max-width:760px;">
+      <div>
+        <h2 style="margin:0 0 4px;font-size:20px;line-height:1.15;">PURCHASE ORDER</h2>
+        <h3 style="margin:0;font-size:20px;line-height:1.15;">${escapeHtml(vendorName)}</h3>
+      </div>
+      <div style="font-size:12px;line-height:1.45;min-width:260px;">
+        <div><strong>Purchase Order Date:</strong> ${escapeHtml(purchaseOrderDate)}</div>
+        <div style="height:12px;"></div>
+        <div><strong>Delivery Date:</strong> ${escapeHtml(deliveryDate)}</div>
+        <div><strong>Purchase Order Number:</strong> ${escapeHtml(purchaseOrderNumber)}</div>
+      </div>
+    </div>
+  `;
+
+  const deliveryHtml = `
+    <div style="margin-top:64px;max-width:760px;">
+      <h3 style="font-size:16px;margin:0 0 16px;">DELIVERY DETAILS</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:12px;line-height:1.3;">
+        <div>
+          <strong>Delivery Address</strong><br/>
+          <span style="white-space:pre-line;">${escapeHtml(deliveryAddress)}</span>
+          ${
+            deliveryInstructions
+              ? `<br/><br/><strong>Delivery Instructions:</strong><br/><span style="white-space:pre-line;">${escapeHtml(deliveryInstructions)}</span>`
+              : ""
+          }
+        </div>
+        <div>
+          <strong>Attention</strong><br/>
+          <span style="white-space:pre-line;">${escapeHtml(attention)}</span><br/>
+          <strong>Telephone</strong><br/>
+          <span style="white-space:pre-line;">${escapeHtml(telephone)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const fullHtml = `
+    <div style="font-family:Arial,sans-serif;color:#000;max-width:820px;">
+      ${fieldsHtml}
+      ${rowsHtml}
+      <p style="margin-top:28px;font-weight:700;">Total: ${escapeHtml(formatCurrency(totalAmount))} USD</p>
+      ${deliveryHtml}
+    </div>
+  `;
+
+  return {
+    fieldsHtml,
+    rowsHtml: `${rowsHtml}<p style="margin-top:28px;font-weight:700;">Total: ${escapeHtml(formatCurrency(totalAmount))} USD</p>${deliveryHtml}`,
+    fullHtml,
+  };
+}
+
 export function buildPdfOrderPreview(input: {
   poNumber: string;
   vendorName: string;
@@ -320,19 +555,35 @@ export function buildPdfOrderPreview(input: {
   }
 
   const formFields = normalized.pdfFormFields.filter((field) => field.label.trim());
-  const lineItems = buildPdfOrderLineItems(input.rows, normalized.pdfSkuMappings);
+  const isBondi = normalized.pdfTemplate === "bondi-pure";
+  const unitPrice = toCurrencyNumber(normalized.pdfUnitPrice, 37.5);
+  const lineItems = isBondi
+    ? buildBondiPureLineItems(input.rows, unitPrice)
+    : buildPdfOrderLineItems(input.rows, normalized.pdfSkuMappings);
   const html = buildPdfPreviewHtml(
     input.poNumber,
     input.vendorName,
     formFields,
     lineItems
   );
+  const finalHtml = isBondi
+    ? buildBondiPurePdfPreviewHtml(
+        input.poNumber,
+        input.vendorName,
+        formFields,
+        lineItems,
+        unitPrice
+      )
+    : html;
 
   return {
     poNumber: input.poNumber,
     vendorName: input.vendorName,
+    template: normalized.pdfTemplate,
+    unitPrice,
+    totalAmount: lineItems.reduce((total, row) => total + (row.total || 0), 0),
     formFields,
     rows: lineItems,
-    ...html,
+    ...finalHtml,
   };
 }

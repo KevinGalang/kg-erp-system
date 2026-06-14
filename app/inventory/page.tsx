@@ -24,7 +24,6 @@ import {
   normalizeVendorPdfSettings,
   vendorUsesPdfFormat,
   type PdfFormField,
-  type PdfSkuMapping,
   type VendorPdfSettings,
 } from "@/lib/vendorOrderPdf";
 
@@ -154,6 +153,40 @@ function escapeHtml(value: string | number) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function getTodaySlashDate() {
+  return new Date().toLocaleDateString("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function normalizePdfFieldKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getPdfFieldValue(
+  fields: PdfFormField[],
+  key: string,
+  fallback = ""
+) {
+  const normalizedKey = normalizePdfFieldKey(key);
+  const field = fields.find(
+    (item) =>
+      normalizePdfFieldKey(item.key || "") === normalizedKey ||
+      normalizePdfFieldKey(item.label) === normalizedKey
+  );
+
+  return field?.value || fallback;
+}
+
+function formatPdfCurrency(value: number) {
+  return `$${value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function roundToNearestUom(value: number, uom: number) {
@@ -704,6 +737,29 @@ export default function InventoryPage() {
     0
   );
 
+  const activeVendorDetails = useMemo(() => {
+    if (!activePoVendor) {
+      return null;
+    }
+
+    const vendor =
+      vendors.find((entry) => vendorMatchesActiveName(entry, activePoVendor)) ??
+      null;
+
+    if (!vendor) {
+      return null;
+    }
+
+    return {
+      ...vendor,
+      settings: normalizeVendorPdfSettings(
+        vendor.settings,
+        vendor.mfg,
+        vendor.code
+      ),
+    };
+  }, [activePoVendor, vendors]);
+
   useEffect(() => {
     let ignore = false;
 
@@ -736,30 +792,7 @@ export default function InventoryPage() {
     return () => {
       ignore = true;
     };
-  }, [activePoVendor, effectiveDate]);
-
-  const activeVendorDetails = useMemo(() => {
-    if (!activePoVendor) {
-      return null;
-    }
-
-    const vendor =
-      vendors.find((entry) => vendorMatchesActiveName(entry, activePoVendor)) ??
-      null;
-
-    if (!vendor) {
-      return null;
-    }
-
-    return {
-      ...vendor,
-      settings: normalizeVendorPdfSettings(
-        vendor.settings,
-        vendor.mfg,
-        vendor.code
-      ),
-    };
-  }, [activePoVendor, vendors]);
+  }, [activePoVendor, activeVendorDetails?.code, effectiveDate]);
 
   const activeVendorUsesPdf = vendorUsesPdfFormat(activeVendorDetails?.settings);
 
@@ -900,6 +933,114 @@ export default function InventoryPage() {
 
     const doc = new jsPDF();
     let y = 18;
+
+    if (pdfOrderPreview.template === "bondi-pure") {
+      const fieldValue = (key: string, fallback = "") =>
+        getPdfFieldValue(pdfOrderPreview.formFields, key, fallback);
+      const purchaseOrderDate = fieldValue(
+        "purchaseOrderDate",
+        getTodaySlashDate()
+      );
+      const purchaseOrderNumber = fieldValue(
+        "purchaseOrderNumber",
+        pdfOrderPreview.poNumber
+      );
+      const deliveryDate = fieldValue("deliveryDate");
+      const deliveryAddress = fieldValue("deliveryAddress");
+      const deliveryInstructions = fieldValue("deliveryInstructions");
+      const attention = fieldValue("attention");
+      const telephone = fieldValue("telephone");
+      const totalAmount =
+        pdfOrderPreview.totalAmount ??
+        pdfOrderPreview.rows.reduce(
+          (total, row) => total + Number(row.total || 0),
+          0
+        );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("PURCHASE ORDER", 14, y);
+      y += 8;
+      doc.text(pdfOrderPreview.vendorName, 14, y);
+
+      doc.setFontSize(8);
+      doc.text("Purchase Order Date:", 118, 18);
+      doc.setFontSize(11);
+      doc.text(purchaseOrderDate || "-", 118, 25);
+      doc.setFontSize(8);
+      doc.text("Delivery Date:", 118, 35);
+      doc.text("Purchase Order Number:", 118, 42);
+      doc.setFont("helvetica", "normal");
+      doc.text(deliveryDate || "-", 158, 35);
+      doc.text(purchaseOrderNumber || "-", 158, 42);
+
+      y = 72;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text("Description", 14, y);
+      doc.text("Quantity", 112, y, { align: "right" });
+      doc.text("Unit Price", 160, y, { align: "right" });
+      doc.text("Amount USD", 196, y, { align: "right" });
+      y += 3;
+      doc.line(14, y, 196, y);
+      y += 7;
+
+      pdfOrderPreview.rows.forEach((row) => {
+        if (y > 245) {
+          doc.addPage();
+          y = 18;
+        }
+        const descriptionLines = doc.splitTextToSize(row.itemName, 92);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text(descriptionLines, 14, y);
+        doc.text(String(row.qty), 112, y, { align: "right" });
+        doc.text(formatPdfCurrency(row.unitPrice || 0), 160, y, {
+          align: "right",
+        });
+        doc.text(formatPdfCurrency(row.total || 0), 196, y, {
+          align: "right",
+        });
+        y += Math.max(7, descriptionLines.length * 5 + 2);
+      });
+
+      y += 12;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(`Total: ${formatPdfCurrency(totalAmount)} USD`, 14, y);
+
+      y += 54;
+      if (y > 240) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.setFontSize(13);
+      doc.text("DELIVERY DETAILS", 14, y);
+      y += 13;
+      doc.setFontSize(8);
+      doc.text("Delivery Address", 14, y);
+      doc.text("Attention", 82, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.text(doc.splitTextToSize(deliveryAddress || "-", 54), 14, y);
+      doc.text(doc.splitTextToSize(attention || "-", 54), 82, y);
+
+      if (deliveryInstructions) {
+        y += 18;
+        doc.setFont("helvetica", "bold");
+        doc.text("Delivery Instructions:", 14, y);
+        doc.setFont("helvetica", "normal");
+        y += 5;
+        doc.text(doc.splitTextToSize(deliveryInstructions, 54), 14, y);
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.text("Telephone", 82, y + 18);
+      doc.setFont("helvetica", "normal");
+      doc.text(telephone || "-", 82, y + 23);
+
+      return doc;
+    }
 
     doc.setFontSize(16);
     doc.text("Purchase Order", 14, y);

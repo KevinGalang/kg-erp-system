@@ -46,6 +46,8 @@ type VendorSettings = {
   emailBody: string;
   pdfEmailBody: string;
   pdfEnabled: boolean;
+  pdfTemplate: string;
+  pdfUnitPrice: string;
   pdfSampleName: string;
   pdfEditableFields: string[];
   pdfFormFields: PdfFormField[];
@@ -120,6 +122,43 @@ function isNutridynVendor(vendor?: VendorRow | null) {
   return vendorText.includes("nutridyn") || vendorText.includes("nutri-dyn");
 }
 
+function isBondiPureVendor(vendor?: VendorRow | null) {
+  const vendorText = `${vendor?.mfg || ""} ${vendor?.code || ""}`.toLowerCase();
+  return vendorText.includes("bondi");
+}
+
+function normalizePdfMatchKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function mergePdfFormFields(defaults: PdfFormField[], existing: PdfFormField[]) {
+  const usedExisting = new Set<number>();
+  const merged = defaults.map((defaultField) => {
+    const defaultKey = normalizePdfMatchKey(defaultField.key || defaultField.label);
+    const existingIndex = existing.findIndex((field, index) => {
+      if (usedExisting.has(index)) return false;
+      return (
+        normalizePdfMatchKey(field.key || field.label) === defaultKey ||
+        normalizePdfMatchKey(field.label) === normalizePdfMatchKey(defaultField.label)
+      );
+    });
+
+    if (existingIndex < 0) {
+      return defaultField;
+    }
+
+    usedExisting.add(existingIndex);
+    return {
+      ...defaultField,
+      ...existing[existingIndex],
+      key: defaultField.key || existing[existingIndex].key,
+      label: defaultField.label,
+    };
+  });
+  const extras = existing.filter((field, index) => !usedExisting.has(index));
+  return [...merged, ...extras];
+}
+
 function getTodayCodeDate() {
   return new Date()
     .toLocaleDateString("en-US", {
@@ -170,6 +209,22 @@ function getDefaultPdfFormFields(vendor?: VendorRow | null): PdfFormField[] {
     ];
   }
 
+  if (isBondiPureVendor(vendor)) {
+    return [
+      { key: "purchaseOrderDate", label: "Purchase Order Date", value: today },
+      { key: "deliveryDate", label: "Delivery Date", value: "" },
+      { key: "purchaseOrderNumber", label: "Purchase Order Number", value: "" },
+      {
+        key: "deliveryAddress",
+        label: "Delivery Address",
+        value: "11915 Enterprise Drive\nCincinnati, OH\n45241, USA",
+      },
+      { key: "deliveryInstructions", label: "Delivery Instructions", value: "" },
+      { key: "attention", label: "Attention", value: "David or Mendel" },
+      { key: "telephone", label: "Telephone", value: "1 855 7372655" },
+    ];
+  }
+
   return [
     { key: "orderDate", label: "Order Date", value: today },
     { key: "accountNumber", label: "Account Number", value: "" },
@@ -182,6 +237,7 @@ function getDefaultPdfFormFields(vendor?: VendorRow | null): PdfFormField[] {
 
 function getDefaultSettings(vendor?: VendorRow | null): VendorSettings {
   const pdfFormFields = getDefaultPdfFormFields(vendor);
+  const isBondi = isBondiPureVendor(vendor);
 
   return {
     emailSubject: `${vendor?.code || "CODE"} x ${getTodayCodeDate()}`,
@@ -198,6 +254,8 @@ Kindly see attached for our order this week.
 
 Thanks`,
     pdfEnabled: false,
+    pdfTemplate: isBondi ? "bondi-pure" : "default",
+    pdfUnitPrice: isBondi ? "37.50" : "",
     pdfSampleName: "",
     pdfEditableFields: defaultPdfFields,
     pdfFormFields,
@@ -215,26 +273,41 @@ function normalizeSettings(
     Array.isArray(settings?.tableColumns) && settings.tableColumns.length > 0
       ? settings.tableColumns
       : defaults.tableColumns;
+  const isBondi = isBondiPureVendor(vendor);
+  const savedPdfFormFields =
+    Array.isArray(settings?.pdfFormFields) && settings.pdfFormFields.length > 0
+      ? settings.pdfFormFields.filter(
+          (field) =>
+            !isBondi || normalizePdfMatchKey(field.label) !== "taxamountusd"
+        )
+      : [];
+  const pdfFormFields =
+    savedPdfFormFields.length > 0
+      ? (isBondi
+          ? mergePdfFormFields(defaults.pdfFormFields, savedPdfFormFields)
+          : savedPdfFormFields
+        ).map((field) =>
+          (field.key === "orderDate" || field.key === "purchaseOrderDate") &&
+          !field.value
+            ? { ...field, value: getTodaySlashDate() }
+            : field
+        )
+      : defaults.pdfFormFields;
 
   return {
     emailSubject: settings?.emailSubject || defaults.emailSubject,
     emailBody: settings?.emailBody || defaults.emailBody,
     pdfEmailBody: settings?.pdfEmailBody || defaults.pdfEmailBody,
     pdfEnabled: Boolean(settings?.pdfEnabled),
+    pdfTemplate: isBondi ? "bondi-pure" : settings?.pdfTemplate || defaults.pdfTemplate,
+    pdfUnitPrice: settings?.pdfUnitPrice || defaults.pdfUnitPrice,
     pdfSampleName: settings?.pdfSampleName || defaults.pdfSampleName,
     pdfEditableFields:
       Array.isArray(settings?.pdfEditableFields) &&
       settings.pdfEditableFields.length > 0
         ? settings.pdfEditableFields
         : defaults.pdfEditableFields,
-    pdfFormFields:
-      Array.isArray(settings?.pdfFormFields) && settings.pdfFormFields.length > 0
-        ? settings.pdfFormFields.map((field) =>
-            field.key === "orderDate" && !field.value
-              ? { ...field, value: getTodaySlashDate() }
-              : field
-          )
-        : defaults.pdfFormFields,
+    pdfFormFields,
     pdfSkuMappings:
       Array.isArray(settings?.pdfSkuMappings) &&
       settings.pdfSkuMappings.length > 0
@@ -793,6 +866,28 @@ export default function VendorSettingsPage() {
               className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
             />
 
+            {settings.pdfTemplate === "bondi-pure" && (
+              <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:max-w-sm">
+                <label className="text-xs font-semibold uppercase text-slate-500">
+                  Unit Price / Amount USD
+                </label>
+                <input
+                  type="text"
+                  value={settings.pdfUnitPrice}
+                  disabled={!settings.pdfEnabled}
+                  onChange={(event) =>
+                    setSettings((current) =>
+                      current
+                        ? { ...current, pdfUnitPrice: event.target.value }
+                        : current
+                    )
+                  }
+                  placeholder="37.50"
+                  className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
+                />
+              </div>
+            )}
+
             <div className="rounded-lg border border-dashed border-slate-300 p-4">
               <label className="block text-xs font-semibold uppercase text-slate-500">
                 Sample PDF
@@ -896,7 +991,13 @@ export default function VendorSettingsPage() {
                       onChange={(event) =>
                         updatePdfFormField(index, "value", event.target.value)
                       }
-                      rows={field.key === "shippingAddress" || field.key === "billingAddress" ? 3 : 2}
+                      rows={
+                        field.key === "shippingAddress" ||
+                        field.key === "billingAddress" ||
+                        field.key === "deliveryAddress"
+                          ? 3
+                          : 2
+                      }
                       placeholder="Field value"
                       className="w-full rounded-lg border border-yellow-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 disabled:bg-slate-100"
                     />
