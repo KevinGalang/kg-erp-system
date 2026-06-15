@@ -25,7 +25,7 @@ export default function RootLayout({
           <section className="flex h-full min-w-0 flex-1 flex-col bg-white">
             <Header />
 
-            <main className="min-h-0 flex-1 overflow-y-auto bg-white p-8">
+            <main className="min-h-0 flex-1 overflow-y-auto bg-white px-8 pb-8">
               <StickyTableSync />
               {children}
             </main>
