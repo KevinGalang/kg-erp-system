@@ -45,6 +45,31 @@ function getDateRange() {
   };
 }
 
+function toIsoDate(value) {
+  const text = String(value ?? "").trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const parsed = new Date(text);
+
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  const match = text.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, month, day, year] = match;
+  const fullYear = year.length === 2 ? `20${year}` : year;
+
+  return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
 async function getPlaywright() {
   try {
     return await import("playwright");
@@ -78,7 +103,9 @@ function getSupabaseAdmin() {
 }
 
 async function waitForShipheroLogin(page) {
-  if (page.url().includes("/dashboard/orders")) {
+  await page.waitForTimeout(1500);
+
+  if (page.url().includes("app.shiphero.com/dashboard/orders")) {
     return;
   }
 
@@ -86,11 +113,13 @@ async function waitForShipheroLogin(page) {
   await page.waitForURL("**/dashboard/orders**", {
     timeout: 5 * 60 * 1000,
   });
+  await page.waitForLoadState("domcontentloaded");
 }
 
 async function selectAllVisibleRows(page) {
-  // ShipHero orders table row-count selector — adjust name if different
-  const lengthSelect = page.locator('select[name="orders_length"], select[name="order_length"]');
+  const lengthSelect = page.locator(
+    'select[name="orders_length"], select[name="order_length"]'
+  );
 
   if ((await lengthSelect.count()) >= 1) {
     await lengthSelect.first().selectOption("1000");
@@ -98,68 +127,124 @@ async function selectAllVisibleRows(page) {
   }
 }
 
+async function selectOptionByText(page, optionText) {
+  const selects = page.locator("select");
+  const count = await selects.count();
+
+  for (let index = 0; index < count; index += 1) {
+    const select = selects.nth(index);
+    const value = await select.evaluate((element, text) => {
+      const options = Array.from(element.options);
+      const option = options.find((item) =>
+        item.textContent
+          ?.trim()
+          .toLowerCase()
+          .includes(String(text).toLowerCase())
+      );
+
+      return option?.value ?? null;
+    }, optionText);
+
+    if (value) {
+      await select.selectOption(value);
+      await page.waitForTimeout(800);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function applyManageOrderFilters(page) {
+  await selectOptionByText(page, "Unfulfilled");
+  await selectOptionByText(page, "Any Hold");
+}
+
 async function extractOnHoldOrders(page) {
   return page.evaluate(() => {
-    // ShipHero Manage Orders table — inspect the page and update the selector if needed
     const tableSelectors = ["#orders_table", "#orders", "table"];
     let table = null;
 
-    for (const sel of tableSelectors) {
-      const found = document.querySelector(sel);
-      if (found && found.querySelector("tbody tr")) {
+    for (const selector of tableSelectors) {
+      const found = document.querySelector(selector);
+
+      if (found?.querySelector("tbody tr")) {
         table = found;
         break;
       }
     }
 
     if (!table) {
-      throw new Error("Could not find orders table. Check that the page has loaded with results.");
+      throw new Error(
+        "Could not find orders table. Check that Manage Orders loaded with results."
+      );
     }
 
-    const headers = Array.from(table.querySelectorAll("thead th")).map(
-      (th) => th.textContent.trim().replace(/\s+/g, " ").toLowerCase()
+    const headers = Array.from(table.querySelectorAll("thead th")).map((th) =>
+      th.textContent.trim().replace(/\s+/g, " ").toLowerCase()
     );
 
-    console.log("Headers found:", headers.join(" | "));
-
     const colIndex = (keywords) => {
-      for (const kw of keywords) {
-        const idx = headers.findIndex((h) => h.includes(kw));
-        if (idx >= 0) return idx;
+      for (const keyword of keywords) {
+        const index = headers.findIndex((header) => header.includes(keyword));
+
+        if (index >= 0) {
+          return index;
+        }
       }
+
       return -1;
     };
 
-    const dateIdx    = colIndex(["order date", "date"]);
-    const orderIdx   = colIndex(["order #", "order number", "order no", "#"]);
-    const nameIdx    = colIndex(["name", "first name", "ship name", "customer"]);
-    const emailIdx   = colIndex(["email"]);
-    const holdIdx    = colIndex(["hold", "on hold"]);
+    const dateIndex = colIndex(["order date", "date"]);
+    const orderIndex = colIndex(["order #", "order number", "order no", "#"]);
+    const nameIndex = colIndex([
+      "first name",
+      "customer",
+      "recipient",
+      "ship name",
+      "name",
+    ]);
+    const emailIndex = colIndex(["email"]);
+    const holdIndex = colIndex(["on hold", "hold"]);
+    const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 
-    const rows = Array.from(table.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td")).map((td) =>
+    const rows = Array.from(table.querySelectorAll("tbody tr")).map((tr) => {
+      const cells = Array.from(tr.querySelectorAll("td")).map((td) =>
         td.textContent.trim().replace(/\s+/g, " ")
-      )
-    );
+      );
+
+      return {
+        cells,
+        text: tr.textContent.trim().replace(/\s+/g, " "),
+      };
+    });
 
     const orders = rows
-      .filter((row) => row.length > 0 && row.some((cell) => cell !== ""))
+      .filter((row) => row.cells.length > 0 && row.cells.some(Boolean))
       .map((row) => {
-        const fullName = nameIdx >= 0 ? (row[nameIdx] || "") : "";
+        const fullName = nameIndex >= 0 ? row.cells[nameIndex] || "" : "";
         const firstName = fullName.split(/\s+/)[0] || fullName;
+        const emailMatch =
+          emailIndex >= 0
+            ? row.cells[emailIndex]?.match(emailPattern)
+            : row.text.match(emailPattern);
+
         return {
-          order_date:   dateIdx  >= 0 ? (row[dateIdx]  || null) : null,
-          order_number: orderIdx >= 0 ? (row[orderIdx] || null) : null,
-          first_name:   firstName || null,
-          email:        emailIdx >= 0 ? (row[emailIdx] || null) : null,
-          on_hold:      holdIdx  >= 0 ? (row[holdIdx]  || "Yes") : "Yes",
+          order_date: dateIndex >= 0 ? row.cells[dateIndex] || null : null,
+          order_number:
+            orderIndex >= 0 ? row.cells[orderIndex] || null : null,
+          first_name: firstName || null,
+          email: emailMatch?.[0] ?? null,
+          on_hold: holdIndex >= 0 ? row.cells[holdIndex] || "Any Hold" : "Any Hold",
         };
       })
-      .filter((o) => o.order_number || o.email);
+      .filter((order) => order.order_number || order.email);
 
     return {
       tableInfo: document.querySelector(".dataTables_info")?.textContent.trim(),
       totalRows: rows.length,
+      headers,
       orders,
     };
   });
@@ -182,7 +267,14 @@ async function saveOrdersToSupabase(orders) {
     return { saved: 0, syncedAt };
   }
 
-  const rows = orders.map((o) => ({ ...o, synced_at: syncedAt }));
+  const rows = orders.map((order) => ({
+    order_date: toIsoDate(order.order_date),
+    order_number: order.order_number,
+    first_name: order.first_name,
+    email: order.email,
+    on_hold: order.on_hold,
+    synced_at: syncedAt,
+  }));
 
   const { error: insertError } = await supabaseAdmin
     .from("shiphero_onhold_orders")
@@ -198,17 +290,15 @@ async function saveOrdersToSupabase(orders) {
 async function main() {
   const { chromium } = await getPlaywright();
   const { startDate, endDate } = getDateRange();
-
-  // ShipHero Manage Orders URL with filters:
-  // - date range: last 30 days
-  // - fulfillment_status: unfulfilled
-  // - on_hold: 1 (Any Hold)
-  // Inspect the ShipHero URL bar after applying filters manually and update these params if needed.
   const query = new URLSearchParams({
     start_date: startDate,
     end_date: endDate,
+    order_date_start: startDate,
+    order_date_end: endDate,
     fulfillment_status: "unfulfilled",
+    order_fulfillment_status: "unfulfilled",
     on_hold: "1",
+    hold: "any",
   });
 
   await mkdir(sessionDir, { recursive: true });
@@ -221,10 +311,11 @@ async function main() {
 
   try {
     await page.goto(
-      `https://app.shiphero.com/dashboard/orders?${query}`,
+      `https://app.shiphero.com/dashboard/orders/v2/manage?${query}`,
       { waitUntil: "domcontentloaded" }
     );
     await waitForShipheroLogin(page);
+    await applyManageOrderFilters(page);
     await page.waitForSelector("table tbody tr", { timeout: 60000 });
     await selectAllVisibleRows(page);
 
@@ -237,6 +328,7 @@ async function main() {
           dateRange: { startDate, endDate },
           tableInfo: result.tableInfo,
           totalRows: result.totalRows,
+          headers: result.headers,
           ordersExtracted: result.orders.length,
           saved,
         },

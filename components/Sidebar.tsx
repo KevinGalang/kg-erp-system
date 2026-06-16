@@ -12,6 +12,7 @@ import {
   Folder,
   FileX2,
   PackageCheck,
+  OctagonPause,
   BookOpen,
   Building2,
   PackageSearch,
@@ -53,7 +54,17 @@ const menuItems: MenuItem[] = [
       },
     ],
   },
-  { label: "Fulfillment", href: "/reports/in-transit", icon: PackageCheck },
+  {
+    label: "Fulfillment",
+    icon: PackageCheck,
+    children: [
+      {
+        label: "Order on Hold",
+        href: "/reports/in-transit",
+        icon: OctagonPause,
+      },
+    ],
+  },
   { label: "Weekly Reports", href: "/reports/weekly", icon: CalendarDays },
   { label: "Monthly Reports", href: "/reports/monthly", icon: CalendarRange },
   {
@@ -100,6 +111,7 @@ export default function Sidebar() {
       pathname.startsWith("/inventory") ||
       pathname.startsWith("/purchase-orders"),
     Files: pathname.startsWith("/files"),
+    Fulfillment: pathname.startsWith("/reports/in-transit"),
     Masters: pathname.startsWith("/masters"),
     "Manage Users": pathname.startsWith("/manage-user"),
   });
