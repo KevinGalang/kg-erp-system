@@ -1,21 +1,9 @@
 import PageTitle from "@/components/PageTitle";
 
 const totals = [
-  {
-    label: "MTD Sales",
-    value: "$140,724",
-    accent: "from-blue-500 to-cyan-400",
-  },
-  {
-    label: "In-transit",
-    value: "8 PO",
-    accent: "from-amber-500 to-orange-400",
-  },
-  {
-    label: "Low Stock",
-    value: "12",
-    accent: "from-rose-500 to-pink-400",
-  },
+  { label: "MTD Sales", value: "$140,724", accent: "from-blue-500 to-cyan-400" },
+  { label: "In-transit", value: "8 PO", accent: "from-amber-500 to-orange-400" },
+  { label: "Low Stock", value: "12", accent: "from-rose-500 to-pink-400" },
 ];
 
 const salesComparison = [
@@ -33,18 +21,20 @@ function formatMoney(value: number) {
 
 export default function DashboardPage() {
   const maxSales = Math.max(
-    ...salesComparison.map((month) =>
-      Math.max(month.thisYear, month.lastYear)
-    )
+    ...salesComparison.map((month) => Math.max(month.thisYear, month.lastYear))
   );
 
-  const chartHeight = 240;
-  const chartWidth = 720;
+  const chartHeight = 280;
+  const chartWidth = 1000;
+  const leftPadding = 70;
+  const rightPadding = 70;
+  const usableWidth = chartWidth - leftPadding - rightPadding;
 
   const trendPoints = salesComparison
     .map((month, index) => {
-      const x = (index / (salesComparison.length - 1)) * chartWidth;
-      const y = chartHeight - (month.thisYear / maxSales) * chartHeight + 20;
+      const x =
+        leftPadding + (index / (salesComparison.length - 1)) * usableWidth;
+      const y = chartHeight - (month.thisYear / maxSales) * 220 + 30;
       return `${x},${y}`;
     })
     .join(" ");
@@ -63,11 +53,8 @@ export default function DashboardPage() {
             className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
           >
             <div className={`h-2 bg-gradient-to-r ${card.accent}`} />
-
             <div className="p-6">
-              <p className="text-sm font-medium text-slate-500">
-                {card.label}
-              </p>
+              <p className="text-sm font-medium text-slate-500">{card.label}</p>
               <p className="mt-3 text-4xl font-bold text-slate-950">
                 {card.value}
               </p>
@@ -104,10 +91,10 @@ export default function DashboardPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <div className="relative h-[360px] min-w-[820px] rounded-xl bg-gradient-to-b from-slate-50 to-white px-10 pb-10 pt-8">
+          <div className="relative h-[390px] min-w-[1000px] rounded-xl bg-gradient-to-b from-slate-50 to-white px-10 pb-10 pt-8">
             <svg
-              className="pointer-events-none absolute left-[70px] top-[54px] z-20 h-[270px] w-[720px] overflow-visible"
-              viewBox={`0 0 ${chartWidth} 280`}
+              className="pointer-events-none absolute inset-x-0 top-16 z-20 h-[280px] w-full overflow-visible"
+              viewBox={`0 0 ${chartWidth} ${chartHeight}`}
               preserveAspectRatio="none"
             >
               <polyline
@@ -120,9 +107,10 @@ export default function DashboardPage() {
               />
 
               {salesComparison.map((month, index) => {
-                const x = (index / (salesComparison.length - 1)) * chartWidth;
-                const y =
-                  chartHeight - (month.thisYear / maxSales) * chartHeight + 20;
+                const x =
+                  leftPadding +
+                  (index / (salesComparison.length - 1)) * usableWidth;
+                const y = chartHeight - (month.thisYear / maxSales) * 220 + 30;
 
                 return (
                   <circle
@@ -138,7 +126,7 @@ export default function DashboardPage() {
               })}
             </svg>
 
-            <div className="relative z-10 flex h-full items-end justify-between gap-6">
+            <div className="relative z-10 grid h-full grid-cols-6 items-end gap-6">
               {salesComparison.map((month) => {
                 const thisYearHeight = Math.max(
                   (month.thisYear / maxSales) * 240,
@@ -153,14 +141,13 @@ export default function DashboardPage() {
                 return (
                   <div
                     key={month.month}
-                    className="flex flex-1 flex-col items-center"
+                    className="flex flex-col items-center justify-end"
                   >
-                    <div className="flex h-[280px] items-end gap-3">
+                    <div className="flex h-[290px] items-end gap-3">
                       <div className="flex flex-col items-center gap-2">
                         <span className="text-xs font-semibold text-blue-700">
                           {formatMoney(month.thisYear)}
                         </span>
-
                         <div
                           className="w-10 rounded-t-lg bg-gradient-to-t from-blue-700 to-cyan-400 shadow-md"
                           style={{ height: `${thisYearHeight}px` }}
@@ -171,7 +158,6 @@ export default function DashboardPage() {
                         <span className="text-xs font-semibold text-orange-600">
                           {formatMoney(month.lastYear)}
                         </span>
-
                         <div
                           className="w-10 rounded-t-lg bg-gradient-to-t from-orange-500 to-amber-300 shadow-md"
                           style={{ height: `${lastYearHeight}px` }}
