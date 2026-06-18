@@ -1,9 +1,21 @@
 import PageTitle from "@/components/PageTitle";
 
 const totals = [
-  { label: "MTD Sales", value: "$140,724" },
-  { label: "In-transit", value: "698" },
-  { label: "Low Stock", value: "12" },
+  {
+    label: "MTD Sales",
+    value: "$140,724",
+    accent: "from-blue-500 to-cyan-400",
+  },
+  {
+    label: "In-transit",
+    value: "698",
+    accent: "from-amber-500 to-orange-400",
+  },
+  {
+    label: "Low Stock",
+    value: "12",
+    accent: "from-rose-500 to-pink-400",
+  },
 ];
 
 const salesComparison = [
@@ -15,44 +27,8 @@ const salesComparison = [
   { month: "Jun", thisYear: 14700, lastYear: 11600 },
 ];
 
-const lowStockItems = [
-  { item: "PyloriVL", sku: "PYL-012", qty: 6, uom: 12 },
-  { item: "OmegaVL", sku: "OMG-004", qty: 8, uom: 24 },
-  { item: "Vitamin D3", sku: "VD3-100", qty: 10, uom: 24 },
-  { item: "Zinc Complex", sku: "ZNC-030", qty: 4, uom: 12 },
-];
-
-const inTransitOrders = [
-  { po: "PO-1008", vendor: "Vidal Labs", status: "In-transit", qty: 120 },
-  { po: "PO-1009", vendor: "NutraHealth", status: "Shipped", qty: 84 },
-  { po: "PO-1010", vendor: "BioSource", status: "Ordered", qty: 60 },
-];
-
-const topSellingItems = [
-  { item: "PyloriVL", sold: 240 },
-  { item: "CardioVL", sold: 210 },
-  { item: "OmegaVL", sold: 185 },
-  { item: "Probiotic Plus", sold: 160 },
-  { item: "Magnesium Glycinate", sold: 144 },
-];
-
-const slowMovers = [
-  { item: "Herbal Calm", sold: 2 },
-  { item: "Liver Support", sold: 4 },
-  { item: "Sleep Blend", sold: 5 },
-  { item: "Greens Powder", sold: 7 },
-  { item: "Joint Support", sold: 8 },
-];
-
-function MiniBar({ value, max }: { value: number; max: number }) {
-  return (
-    <div className="h-2 w-full rounded-full bg-slate-100">
-      <div
-        className="h-2 rounded-full bg-slate-900"
-        style={{ width: `${Math.min((value / max) * 100, 100)}%` }}
-      />
-    </div>
-  );
+function formatMoney(value: number) {
+  return `$${value.toLocaleString()}`;
 }
 
 export default function DashboardPage() {
@@ -60,167 +36,97 @@ export default function DashboardPage() {
     ...salesComparison.map((m) => Math.max(m.thisYear, m.lastYear))
   );
 
-  const maxTopSelling = Math.max(...topSellingItems.map((i) => i.sold));
-  const maxSlow = Math.max(...slowMovers.map((i) => i.sold));
-
   return (
-    <section>
+    <section className="space-y-6">
       <PageTitle
         title="Dashboard"
         description="Sales, inventory movement, and purchasing overview."
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
         {totals.map((card) => (
           <article
             key={card.label}
-            className="rounded-xl border border-slate-200 bg-white p-5 text-center shadow-sm"
+            className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
           >
-            <p className="text-sm font-medium text-slate-500">{card.label}</p>
-            <p className="mt-2 text-3xl font-bold text-slate-900">
-              {card.value}
-            </p>
+            <div className={`h-2 bg-gradient-to-r ${card.accent}`} />
+
+            <div className="p-6">
+              <p className="text-sm font-medium text-slate-500">
+                {card.label}
+              </p>
+              <p className="mt-3 text-4xl font-bold text-slate-950">
+                {card.value}
+              </p>
+            </div>
           </article>
         ))}
       </div>
 
-      <article className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">
-            Past 6 Months Sales vs Last Year
-          </h3>
+      <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-950">
+              Past 6 Months Sales vs Last Year
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Monthly sales comparison using sample data.
+            </p>
+          </div>
 
-          <div className="flex gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-1">
-              <span className="h-3 w-3 rounded-sm bg-slate-900" />
+          <div className="flex gap-4 text-xs font-medium text-slate-600">
+            <span className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-sm bg-blue-600" />
               This Year
             </span>
-            <span className="flex items-center gap-1">
-              <span className="h-3 w-3 rounded-sm bg-slate-300" />
+            <span className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-sm bg-orange-400" />
               Last Year
             </span>
           </div>
         </div>
 
-        <div className="flex h-72 items-end justify-between gap-4 border-b border-l border-slate-200 px-4 pt-4">
-          {salesComparison.map((month) => (
-            <div key={month.month} className="flex flex-1 flex-col items-center">
-              <div className="flex h-56 items-end gap-2">
-                <div
-                  className="w-7 rounded-t-md bg-slate-900"
-                  style={{ height: `${(month.thisYear / maxSales) * 100}%` }}
-                  title={`This Year: $${month.thisYear.toLocaleString()}`}
-                />
-                <div
-                  className="w-7 rounded-t-md bg-slate-300"
-                  style={{ height: `${(month.lastYear / maxSales) * 100}%` }}
-                  title={`Last Year: $${month.lastYear.toLocaleString()}`}
-                />
-              </div>
+        <div className="overflow-x-auto">
+          <div className="flex h-80 min-w-[760px] items-end justify-between gap-6 rounded-xl bg-gradient-to-b from-slate-50 to-white px-6 pb-8 pt-12">
+            {salesComparison.map((month) => (
+              <div
+                key={month.month}
+                className="flex flex-1 flex-col items-center"
+              >
+                <div className="flex h-56 items-end gap-3">
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="text-xs font-semibold text-blue-700">
+                      {formatMoney(month.thisYear)}
+                    </span>
+                    <div
+                      className="w-9 rounded-t-lg bg-gradient-to-t from-blue-700 to-cyan-400 shadow-sm"
+                      style={{
+                        height: `${(month.thisYear / maxSales) * 100}%`,
+                      }}
+                    />
+                  </div>
 
-              <p className="mt-3 text-xs font-medium text-slate-600">
-                {month.month}
-              </p>
-            </div>
-          ))}
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="text-xs font-semibold text-orange-600">
+                      {formatMoney(month.lastYear)}
+                    </span>
+                    <div
+                      className="w-9 rounded-t-lg bg-gradient-to-t from-orange-500 to-amber-300 shadow-sm"
+                      style={{
+                        height: `${(month.lastYear / maxSales) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <p className="mt-4 text-sm font-semibold text-slate-700">
+                  {month.month}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       </article>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-base font-semibold text-slate-900">
-            Low Stock
-          </h3>
-
-          <table className="w-full text-left text-sm">
-            <thead className="border-b text-xs uppercase text-slate-500">
-              <tr>
-                <th className="py-2">Item</th>
-                <th className="py-2">SKU</th>
-                <th className="py-2 text-right">Qty</th>
-                <th className="py-2 text-right">UOM</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lowStockItems.map((item) => (
-                <tr key={item.sku} className="border-b last:border-0">
-                  <td className="py-2 text-slate-800">{item.item}</td>
-                  <td className="py-2 text-slate-500">{item.sku}</td>
-                  <td className="py-2 text-right font-semibold text-red-600">
-                    {item.qty}
-                  </td>
-                  <td className="py-2 text-right text-slate-600">{item.uom}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
-
-        <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-base font-semibold text-slate-900">
-            In-transit
-          </h3>
-
-          <table className="w-full text-left text-sm">
-            <thead className="border-b text-xs uppercase text-slate-500">
-              <tr>
-                <th className="py-2">PO</th>
-                <th className="py-2">Vendor</th>
-                <th className="py-2">Status</th>
-                <th className="py-2 text-right">Qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {inTransitOrders.map((order) => (
-                <tr key={order.po} className="border-b last:border-0">
-                  <td className="py-2 text-slate-800">{order.po}</td>
-                  <td className="py-2 text-slate-600">{order.vendor}</td>
-                  <td className="py-2 text-slate-600">{order.status}</td>
-                  <td className="py-2 text-right font-semibold text-slate-900">
-                    {order.qty}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
-
-        <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-base font-semibold text-slate-900">
-            Top Selling Items
-          </h3>
-
-          <div className="space-y-4">
-            {topSellingItems.map((item) => (
-              <div key={item.item}>
-                <div className="mb-1 flex justify-between text-sm">
-                  <span className="text-slate-700">{item.item}</span>
-                  <span className="font-medium text-slate-900">{item.sold}</span>
-                </div>
-                <MiniBar value={item.sold} max={maxTopSelling} />
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-base font-semibold text-slate-900">
-            Slow Movers
-          </h3>
-
-          <div className="space-y-4">
-            {slowMovers.map((item) => (
-              <div key={item.item}>
-                <div className="mb-1 flex justify-between text-sm">
-                  <span className="text-slate-700">{item.item}</span>
-                  <span className="font-medium text-slate-900">{item.sold}</span>
-                </div>
-                <MiniBar value={item.sold} max={maxSlow} />
-              </div>
-            ))}
-          </div>
-        </article>
-      </div>
     </section>
   );
 }
