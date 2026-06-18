@@ -1,6 +1,8 @@
 import PageTitle from "@/components/PageTitle";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = "force-dynamic";
+
 type Item = {
   id?: string;
   product_title?: string;
@@ -25,13 +27,7 @@ type PurchaseOrder = {
   vendor?: string;
   status?: string;
   total_quantity?: number;
-  created_at?: string;
 };
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 function getQty(item: Item) {
   return Number(
@@ -73,6 +69,29 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
 }
 
 export default async function DashboardPage() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    return (
+      <section>
+        <PageTitle
+          title="Dashboard"
+          description="Quick overview of inventory, purchasing, vendors, and item movement."
+        />
+
+        <article className="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+          Missing Supabase environment variables. Please check Vercel
+          environment variables.
+        </article>
+      </section>
+    );
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
   const { data: items = [] } = await supabase
     .from("item_master_list")
     .select("*")
@@ -94,6 +113,7 @@ export default async function DashboardPage() {
 
   const inTransitOrders = orders.filter((order) => {
     const status = String(order.status || "").toLowerCase();
+
     return (
       status.includes("transit") ||
       status.includes("in-transit") ||
@@ -104,6 +124,7 @@ export default async function DashboardPage() {
 
   const openOrders = orders.filter((order) => {
     const status = String(order.status || "").toLowerCase();
+
     return (
       status.includes("open") ||
       status.includes("pending") ||
@@ -135,7 +156,7 @@ export default async function DashboardPage() {
     .slice(0, 5);
 
   const maxSold = Math.max(...topSellingItems.map(getSold), 1);
-  const maxVendorQty = Math.max(...topVendors.map((v) => v.qty), 1);
+  const maxVendorQty = Math.max(...topVendors.map((vendor) => vendor.qty), 1);
 
   const summaryCards = [
     { label: "Total Inventory Items", value: inventoryItems.length },
@@ -182,6 +203,7 @@ export default async function DashboardPage() {
                     {getSold(item)}
                   </span>
                 </div>
+
                 <ProgressBar value={getSold(item)} max={maxSold} />
               </div>
             ))}
@@ -204,6 +226,7 @@ export default async function DashboardPage() {
                     {vendor.qty}
                   </span>
                 </div>
+
                 <ProgressBar value={vendor.qty} max={maxVendorQty} />
               </div>
             ))}
@@ -225,6 +248,7 @@ export default async function DashboardPage() {
                   <th className="py-2 text-right">Min/UOM</th>
                 </tr>
               </thead>
+
               <tbody>
                 {lowStockItems.slice(0, 10).map((item) => (
                   <tr
@@ -243,6 +267,14 @@ export default async function DashboardPage() {
                     </td>
                   </tr>
                 ))}
+
+                {lowStockItems.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-4 text-center text-slate-500">
+                      No low stock items found.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -263,6 +295,7 @@ export default async function DashboardPage() {
                   <th className="py-2 text-right">Qty</th>
                 </tr>
               </thead>
+
               <tbody>
                 {inTransitOrders.slice(0, 10).map((order) => (
                   <tr
@@ -283,6 +316,14 @@ export default async function DashboardPage() {
                     </td>
                   </tr>
                 ))}
+
+                {inTransitOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-4 text-center text-slate-500">
+                      No in-transit orders found.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -304,6 +345,7 @@ export default async function DashboardPage() {
                   <th className="py-2 text-right">Current Qty</th>
                 </tr>
               </thead>
+
               <tbody>
                 {slowMovers.map((item) => (
                   <tr
@@ -323,6 +365,14 @@ export default async function DashboardPage() {
                     </td>
                   </tr>
                 ))}
+
+                {slowMovers.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-4 text-center text-slate-500">
+                      No slow movers found.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
