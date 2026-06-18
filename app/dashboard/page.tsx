@@ -8,7 +8,7 @@ const totals = [
   },
   {
     label: "In-transit",
-    value: "698",
+    value: "8 PO",
     accent: "from-amber-500 to-orange-400",
   },
   {
@@ -33,7 +33,9 @@ function formatMoney(value: number) {
 
 export default function DashboardPage() {
   const maxSales = Math.max(
-    ...salesComparison.map((m) => Math.max(m.thisYear, m.lastYear))
+    ...salesComparison.map((month) =>
+      Math.max(month.thisYear, month.lastYear)
+    )
   );
 
   return (
@@ -87,43 +89,53 @@ export default function DashboardPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <div className="flex h-80 min-w-[760px] items-end justify-between gap-6 rounded-xl bg-gradient-to-b from-slate-50 to-white px-6 pb-8 pt-12">
-            {salesComparison.map((month) => (
-              <div
-                key={month.month}
-                className="flex flex-1 flex-col items-center"
-              >
-                <div className="flex h-56 items-end gap-3">
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-xs font-semibold text-blue-700">
-                      {formatMoney(month.thisYear)}
-                    </span>
-                    <div
-                      className="w-9 rounded-t-lg bg-gradient-to-t from-blue-700 to-cyan-400 shadow-sm"
-                      style={{
-                        height: `${(month.thisYear / maxSales) * 100}%`,
-                      }}
-                    />
+          <div className="flex h-[360px] min-w-[760px] items-end justify-between gap-6 rounded-xl bg-gradient-to-b from-slate-50 to-white px-6 pb-10 pt-8">
+            {salesComparison.map((month) => {
+              const thisYearHeight = Math.max(
+                (month.thisYear / maxSales) * 240,
+                40
+              );
+
+              const lastYearHeight = Math.max(
+                (month.lastYear / maxSales) * 240,
+                40
+              );
+
+              return (
+                <div
+                  key={month.month}
+                  className="flex flex-1 flex-col items-center"
+                >
+                  <div className="flex h-[280px] items-end gap-3">
+                    <div className="flex flex-col items-center gap-2">
+                      <span className="text-xs font-semibold text-blue-700">
+                        {formatMoney(month.thisYear)}
+                      </span>
+
+                      <div
+                        className="w-10 rounded-t-lg bg-gradient-to-t from-blue-700 to-cyan-400 shadow-md"
+                        style={{ height: `${thisYearHeight}px` }}
+                      />
+                    </div>
+
+                    <div className="flex flex-col items-center gap-2">
+                      <span className="text-xs font-semibold text-orange-600">
+                        {formatMoney(month.lastYear)}
+                      </span>
+
+                      <div
+                        className="w-10 rounded-t-lg bg-gradient-to-t from-orange-500 to-amber-300 shadow-md"
+                        style={{ height: `${lastYearHeight}px` }}
+                      />
+                    </div>
                   </div>
 
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-xs font-semibold text-orange-600">
-                      {formatMoney(month.lastYear)}
-                    </span>
-                    <div
-                      className="w-9 rounded-t-lg bg-gradient-to-t from-orange-500 to-amber-300 shadow-sm"
-                      style={{
-                        height: `${(month.lastYear / maxSales) * 100}%`,
-                      }}
-                    />
-                  </div>
+                  <p className="mt-4 text-sm font-semibold text-slate-700">
+                    {month.month}
+                  </p>
                 </div>
-
-                <p className="mt-4 text-sm font-semibold text-slate-700">
-                  {month.month}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </article>
