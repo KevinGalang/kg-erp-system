@@ -42,7 +42,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "1 week",
     leadTimeWeeks: 2,
     reviewPeriodWeeks: 1,
-    uom: 1,
+    uom: 15,
   },
   {
     date: SNAPSHOT_DATE,
@@ -62,7 +62,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "1 week",
     leadTimeWeeks: 2,
     reviewPeriodWeeks: 1,
-    uom: 1,
+    uom: 15,
   },
   {
     date: SNAPSHOT_DATE,
@@ -82,7 +82,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "1 week",
     leadTimeWeeks: 2,
     reviewPeriodWeeks: 1,
-    uom: 1,
+    uom: 12,
   },
   {
     date: SNAPSHOT_DATE,
@@ -102,7 +102,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "2 weeks",
     leadTimeWeeks: 3,
     reviewPeriodWeeks: 2,
-    uom: 1,
+    uom: 12,
   },
   {
     date: SNAPSHOT_DATE,
@@ -122,7 +122,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "2 weeks",
     leadTimeWeeks: 3,
     reviewPeriodWeeks: 2,
-    uom: 1,
+    uom: 12,
   },
   {
     date: SNAPSHOT_DATE,
@@ -142,7 +142,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "2 weeks",
     leadTimeWeeks: 3,
     reviewPeriodWeeks: 2,
-    uom: 1,
+    uom: 6,
   },
   {
     date: SNAPSHOT_DATE,
@@ -162,7 +162,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "2 weeks",
     leadTimeWeeks: 4,
     reviewPeriodWeeks: 2,
-    uom: 1,
+    uom: 6,
   },
   {
     date: SNAPSHOT_DATE,
@@ -182,7 +182,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "2 weeks",
     leadTimeWeeks: 4,
     reviewPeriodWeeks: 2,
-    uom: 1,
+    uom: 12,
   },
   {
     date: SNAPSHOT_DATE,
@@ -202,7 +202,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "2 weeks",
     leadTimeWeeks: 4,
     reviewPeriodWeeks: 2,
-    uom: 1,
+    uom: 6,
   },
   {
     date: SNAPSHOT_DATE,
@@ -222,7 +222,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "1 week",
     leadTimeWeeks: 2,
     reviewPeriodWeeks: 1,
-    uom: 1,
+    uom: 15,
   },
   {
     date: SNAPSHOT_DATE,
@@ -242,7 +242,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "1 week",
     leadTimeWeeks: 2,
     reviewPeriodWeeks: 1,
-    uom: 1,
+    uom: 15,
   },
   {
     date: SNAPSHOT_DATE,
@@ -262,7 +262,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "1 week",
     leadTimeWeeks: 2,
     reviewPeriodWeeks: 1,
-    uom: 1,
+    uom: 15,
   },
   {
     date: SNAPSHOT_DATE,
@@ -282,7 +282,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "3 weeks",
     leadTimeWeeks: 6,
     reviewPeriodWeeks: 3,
-    uom: 1,
+    uom: 12,
   },
   {
     date: SNAPSHOT_DATE,
@@ -302,7 +302,7 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "3 weeks",
     leadTimeWeeks: 6,
     reviewPeriodWeeks: 3,
-    uom: 1,
+    uom: 12,
   },
   {
     date: SNAPSHOT_DATE,
@@ -322,11 +322,10 @@ const MOCK_ROWS: InventoryRow[] = [
     reviewPeriod: "3 weeks",
     leadTimeWeeks: 6,
     reviewPeriodWeeks: 3,
-    uom: 1,
+    uom: 6,
   },
 ];
 
-// In-memory approved quantities store (persists across requests in dev)
 const approvedQtyStore = new Map<string, number>();
 
 export async function GET(request: Request) {
@@ -334,16 +333,17 @@ export async function GET(request: Request) {
   const requestedDate = requestUrl.searchParams.get("date")?.trim() ?? "";
   const snapshotDate = requestedDate || SNAPSHOT_DATE;
 
-  const rows = MOCK_ROWS
-    .filter((row) => row.date === snapshotDate)
-    .map((row) => {
+  const rows = MOCK_ROWS.filter((row) => row.date === snapshotDate).map(
+    (row) => {
       const storeKey = `${snapshotDate}:${row.sku}`;
       const savedApproved = approvedQtyStore.get(storeKey);
+
       return {
         ...row,
         qtyApproved: savedApproved ?? row.qtyApproved,
       };
-    });
+    }
+  );
 
   return NextResponse.json({
     snapshotDate,
@@ -359,20 +359,35 @@ export async function PATCH(request: Request) {
       sku?: string;
       qtyApproved?: number;
     };
+
     const snapshotDate = payload.snapshotDate?.trim();
     const sku = payload.sku?.trim();
     const qtyApproved = Number(payload.qtyApproved ?? 0);
 
     if (!snapshotDate || !sku) {
-      return NextResponse.json({ success: false, error: "Missing snapshotDate or sku." }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Missing snapshotDate or sku.",
+        },
+        { status: 400 }
+      );
     }
 
     approvedQtyStore.set(`${snapshotDate}:${sku}`, qtyApproved);
 
-    return NextResponse.json({ success: true, snapshotDate, sku, qtyApproved });
+    return NextResponse.json({
+      success: true,
+      snapshotDate,
+      sku,
+      qtyApproved,
+    });
   } catch (error) {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 400 }
     );
   }
